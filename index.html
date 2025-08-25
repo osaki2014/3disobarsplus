@@ -84,7 +84,7 @@
 
   <div id="viewer">
     <canvas id="c"></canvas>
-    <div id="overlay">左ドラッグ:回転 / 右ドラッグ:平行移動 / ホイール:ズーム / 線上ドラッグ:高さ変更（Shift=微 / Alt=粗）</div>
+    <div id="overlay">ドラッグ:回転 / 右ドラッグ:平行移動 / ホイール:ズーム / 線上ドラッグ:高さ変更（Shift=微 / Alt=粗）</div>
     <div id="dragHud"></div>
   </div>
 
@@ -95,7 +95,7 @@
       <div class="row"><label>基準（軸＆キューブ）表示</label><input id="basisVisible" type="checkbox" checked></div>
       <div class="row"><label>グリッド表示（XY/ZX）</label><input id="gridVisible" type="checkbox" checked></div>
       <div class="row"><label>高さ倍率（Z）</label><input id="heightScale" type="range" min="0.1" max="20" step="0.1" value="5"></div>
-      <div class="row"><label>ドラッグ感度（px→高さ）</label><input id="dragSensitivity" type="range" min="0.05" max="2.0" step="0.05" value="0.25"></div>
+      <div class="row"><label>ドラッグ感度（px→高さ）</label><input id="dragSensitivity" type="range" min="0.05" max="2.0" step="0.05" value="0.3"></div>
       <div class="row"><label>サンプリング密度（新規読込時）</label><input id="sample" type="range" min="32" max="1000" step="1" value="240"></div>
     </div>
 
@@ -118,14 +118,15 @@
       <h2>表示モード</h2>
       <div class="row"><label>パイプ（Tube）</label><input id="modePipe" type="checkbox" checked></div>
       <div class="row"><label>壁（Wall：帯押し出し）</label><input id="modeWall" type="checkbox"></div>
-      <div class="row"><label>パイプ直径</label><input id="pipeDia" type="range" min="0.2" max="8" step="0.1" value="2.4"></div>
-      <div class="row"><label>壁の厚さ（帯幅）</label><input id="wallThick" type="range" min="0.2" max="12" step="0.1" value="2.0"></div>
+      <!-- ★初期直径を太めに（6.0） -->
+      <div class="row"><label>パイプ直径</label><input id="pipeDia" type="range" min="0.2" max="12" step="0.1" value="6.0"></div>
+      <div class="row"><label>壁の厚さ（帯幅）</label><input id="wallThick" type="range" min="0.2" max="16" step="0.1" value="2.5"></div>
       <div class="row"><label>壁の不透明度</label><input id="wallOpacity" type="range" min="0" max="1" step="0.01" value="0.9"></div>
       <div class="row"><span class="muted">※パイプ/壁は同時表示可。ドラッグは表示中の形状に有効。</span><span></span></div>
     </div>
 
     <div class="section">
-      <h2>等高線リスト</h2>
+      <h2>等圧線リスト</h2>
       <div id="list"></div>
     </div>
   </aside>
@@ -139,6 +140,10 @@ import { STLExporter } from 'three/addons/exporters/STLExporter.js';
 import * as pako from 'https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.esm.mjs';
 import { FontLoader } from 'three/addons/loaders/FontLoader.js';
 import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+
+/* ========= タッチ最適化：当たり判定の太さ係数 ========= */
+const PICK_TUBE_SCALE = 2.8;   // パイプの当たり判定：見た目半径×これ
+const PICK_BAND_SCALE = 1.8;   // 壁（帯）の当たり判定：帯幅×これ（より広く）
 
 /* ==== DOM refs ==== */
 const ui = {
@@ -231,7 +236,15 @@ const cube=new THREE.Mesh(new THREE.BoxGeometry(60,60,60),[
 /* ==== containers ==== */
 const chartGroup=new THREE.Group(); scene.add(chartGroup);
 const rootLines=new THREE.Group(); chartGroup.add(rootLines);
-let items=[]; // {pipeMesh, wallMesh, activeMesh, pathPoints, height, ui, centroid, pressure, area, autoTarget}
+/* items 構造：
+  {
+    pipeMesh, wallMesh,                  // 可視メッシュ
+    pickPipeMesh, pickWallMesh,          // 当たり判定メッシュ（透明で太い）
+    activeMesh, activePick,              // 現在の表示/ピック対象
+    pathPoints, height, ui, centroid, pressure, area, autoTarget
+  }
+*/
+let items=[];
 let weatherPlane=null, lastSvgDims=null, lastRawSvgText="";
 
 /* ==== render loop / resize ==== */
@@ -260,7 +273,7 @@ function viewFront(){ const b=new THREE.Box3().setFromObject(chartGroup),c=new T
 function viewSide(){ const b=new THREE.Box3().setFromObject(chartGroup),c=new THREE.Vector3(),s=new THREE.Vector3(); b.getCenter(c); b.getSize(s); const dist=Math.max(s.x,s.y,s.z)*2+1; camera.position.set(c.x+dist,c.y,c.z); _target.copy(c); controls.target.copy(c); controls.update(); if(!camera.isPerspectiveCamera) setOrthoFrustum(); }
 
 /* ==== helpers (color, max) ==== */
-function colorFromHeight(h,maxH){ if(maxH<=0) return new THREE.Color(0xff0000); const t=Math.min(Math.max(h/maxH,0),1); const c=new THREE.Color(); c.setHSL((2/3)*t,1,0.5); return c; }
+function colorFromHeight(h,maxH){ if(maxH<=0 || h<=0) return new THREE.Color(0xff0000); const t=Math.min(Math.max(h/maxH,0),1); const c=new THREE.Color(); c.setHSL((2/3)*t,1,0.5); return c; }
 function currentMaxHeightStrict(){ if(!items.length) return 0; let m=0; for(const it of items) if(it.height>m) m=it.height; return m; }
 
 /* ==== geometry builders ==== */
@@ -270,76 +283,54 @@ function buildTubeGeometry(points, radius){
   return new THREE.TubeGeometry(curve, seg, radius, 12, false);
 }
 
-/* ラウンドオフセットで帯（リボン）を作り、Z=0..1 に押し出したメッシュを返す */
+/* ラウンドオフセット帯（Z=0..1 押し出し） */
 function buildWallRibbonGeometry(points, width, miterEps=0.25){
   const n = points.length; if(n < 2) return new THREE.BoxGeometry(0,0,0);
   const half = width * 0.5;
   const dir = new Array(n);
-
-  // 単純接線
   for(let i=0;i<n;i++){
     const a = points[Math.max(0,i-1)], b = points[Math.min(n-1,i+1)];
     const vx = b.x - a.x, vy = b.y - a.y;
     const l = Math.hypot(vx,vy) || 1;
     dir[i] = {x:vx/l, y:vy/l};
   }
-
   const left = new Array(n), right = new Array(n);
   for(let i=0;i<n;i++){
-    const t0 = dir[Math.max(0,i-1)];
-    const t1 = dir[Math.min(n-1,i+1)];
-    // 前後法線
-    const n0 = {x:-t0.y, y:t0.x};
-    const n1 = {x:-t1.y, y:t1.x};
-    // 平均法線（丸め）
+    const t0 = dir[Math.max(0,i-1)], t1 = dir[Math.min(n-1,i+1)];
+    const n0 = {x:-t0.y, y:t0.x}, n1 = {x:-t1.y, y:t1.x};
     let ax = n0.x + n1.x, ay = n0.y + n1.y;
     const al = Math.hypot(ax,ay);
-    if(al < 1e-6){ // 直線：片方でOK
-      ax = n0.x; ay = n0.y;
-    } else { ax/=al; ay/=al; }
-
-    // マイター係数（トゲ防止）
-    const dot = ax*n0.x + ay*n0.y; // cos(theta/2) 相当
+    if(al < 1e-6){ ax = n0.x; ay = n0.y; } else { ax/=al; ay/=al; }
+    const dot = ax*n0.x + ay*n0.y;
     const scale = half / Math.max(Math.abs(dot), miterEps);
-
     const p = points[i];
     left[i]  = new THREE.Vector3(p.x + ax*scale, p.y + ay*scale, 0);
     right[i] = new THREE.Vector3(p.x - ax*scale, p.y - ay*scale, 0);
   }
-
-  // 頂点：LB,RB,LT,RT を各 i に4つ
   const positions = new Float32Array(n*4*3);
   const uvs       = new Float32Array(n*4*2);
-  const id = (i,k)=> i*4+k; // 0:LB 1:RB 2:LT 3:RT
-
+  const id = (i,k)=> i*4+k;
   for(let i=0;i<n;i++){
     const L=left[i], R=right[i];
     positions.set([L.x,L.y,0], (id(i,0))*3);
     positions.set([R.x,R.y,0], (id(i,1))*3);
     positions.set([L.x,L.y,1], (id(i,2))*3);
     positions.set([R.x,R.y,1], (id(i,3))*3);
-
     const u = i/(n-1);
     uvs.set([u,0], (id(i,0))*2);
     uvs.set([u,1], (id(i,1))*2);
     uvs.set([u,0], (id(i,2))*2);
     uvs.set([u,1], (id(i,3))*2);
   }
-
   const indices=[];
   for(let i=0;i<n-1;i++){
     const aLB=id(i,0), aRB=id(i,1), aLT=id(i,2), aRT=id(i,3);
     const bLB=id(i+1,0), bRB=id(i+1,1), bLT=id(i+1,2), bRT=id(i+1,3);
-    // 左側面
-    indices.push(aLB,aLT,bLT,  aLB,bLT,bLB);
-    // 右側面
-    indices.push(aRB,bRB,bRT,  aRB,bRT,aRT);
-    // 上面
-    indices.push(aLT,aRT,bRT,  aLT,bRT,bLT);
-    // 底面
-    indices.push(aLB,bLB,bRB,  aLB,bRB,aRB);
+    indices.push(aLB,aLT,bLT,  aLB,bLT,bLB); // 左
+    indices.push(aRB,bRB,bRT,  aRB,bRT,aRT); // 右
+    indices.push(aLT,aRT,bRT,  aLT,bRT,bLT); // 上
+    indices.push(aLB,bLB,bRB,  aLB,bRB,aRB); // 下
   }
-
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(positions,3));
   g.setAttribute('uv',       new THREE.BufferAttribute(uvs,2));
@@ -369,6 +360,7 @@ async function loadSVGFromString(svgText){
       const pts2=sub.getPoints(Math.max(2,sampleN)); if(pts2.length<2) continue;
       const pts3=pts2.map(pt=>new THREE.Vector3(+pt.x, -pt.y, 0)); // Y反転
 
+      // 可視メッシュ
       const pipeGeom = buildTubeGeometry(pts3, radius);
       const pipeMat  = new THREE.MeshStandardMaterial({color:new THREE.Color(stroke), roughness:.6, metalness:.06, side:THREE.DoubleSide});
       const pipeMesh = new THREE.Mesh(pipeGeom, pipeMat);
@@ -377,9 +369,24 @@ async function loadSVGFromString(svgText){
       const wallMat  = new THREE.MeshStandardMaterial({color:new THREE.Color(stroke), roughness:.7, metalness:.05, side:THREE.DoubleSide, transparent: wallOp<1, opacity: wallOp});
       const wallMesh = new THREE.Mesh(wallGeom, wallMat);
 
+      // 当たり判定メッシュ（透明で太め）
+      const pickPipeGeom = buildTubeGeometry(pts3, radius * PICK_TUBE_SCALE);
+      const pickPipeMat  = new THREE.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0.001, depthWrite:false});
+      const pickPipeMesh = new THREE.Mesh(pickPipeGeom, pickPipeMat); pickPipeMesh.renderOrder = -1000;
+
+      const pickWallGeom = buildWallRibbonGeometry(pts3, bandW * PICK_BAND_SCALE);
+      const pickWallMat  = new THREE.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0.001, depthWrite:false});
+      const pickWallMesh = new THREE.Mesh(pickWallGeom, pickWallMat); pickWallMesh.renderOrder = -1000;
+
       const cen=centroidXY(pts2), area=polygonArea(pts2);
-      items.push({pipeMesh, wallMesh, activeMesh:null, pathPoints:pts3, height:0, ui:{}, centroid:cen, pressure:undefined, area, autoTarget:0});
-      linesGroup.add(pipeMesh, wallMesh);
+      items.push({
+        pipeMesh, wallMesh,
+        pickPipeMesh, pickWallMesh,
+        activeMesh:null, activePick:null,
+        pathPoints:pts3, height:0, ui:{}, centroid:cen, pressure:undefined, area, autoTarget:0
+      });
+
+      linesGroup.add(pipeMesh, wallMesh, pickPipeMesh, pickWallMesh);
     }
   }
 
@@ -445,14 +452,22 @@ function updateHeightsAndColors(){
   const maxH=currentMaxHeightStrict(); // その時点の最高で正規化
 
   for(const it of items){
-    it.pipeMesh.position.z = it.height * s;
-    it.wallMesh.scale.z    = Math.max(it.height * s, 0.0001);
+    const z = it.height * s;
+
+    // 可視メッシュのZ反映
+    it.pipeMesh.position.z = z;
+    it.wallMesh.scale.z    = Math.max(z, 0.0001);
     it.wallMesh.position.z = 0;
 
+    // 当たり判定メッシュも追従
+    it.pickPipeMesh.position.z = z;
+    it.pickWallMesh.scale.z    = Math.max(z, 0.0001);
+    it.pickWallMesh.position.z = 0;
+
+    // 色
     const col = colorFromHeight(it.height, maxH);
     it.pipeMesh.material.color.copy(col);
     it.wallMesh.material.color.copy(col);
-
     if(it.ui?.color) it.ui.color.value = `#${col.getHexString()}`;
   }
 }
@@ -462,9 +477,19 @@ function applyModeVisibility(){
   const showPipe=ui.modePipe.checked;
   const showWall=ui.modeWall.checked;
   for(const it of items){
-    it.pipeMesh.visible=showPipe;
-    it.wallMesh.visible=showWall;
-    it.activeMesh = showWall ? it.wallMesh : it.pipeMesh;
+    it.pipeMesh.visible = showPipe;
+    it.wallMesh.visible = showWall;
+    it.pickPipeMesh.visible = showPipe;
+    it.pickWallMesh.visible = showWall;
+
+    // ドラッグ対象は「表示中」を優先（壁がONなら壁、でなければパイプ）
+    if (showWall){
+      it.activeMesh = it.wallMesh;
+      it.activePick = it.pickWallMesh;
+    } else {
+      it.activeMesh = it.pipeMesh;
+      it.activePick = it.pickPipeMesh;
+    }
   }
 }
 
@@ -487,7 +512,12 @@ function buildList(orderByPressure=false){
     const color=document.createElement('input'); color.type='color'; color.disabled=true; color.value='#9aa4b2';
     const tag=document.createElement('span'); tag.className='small muted'; tag.textContent=isFinite(it.pressure)?`P=${it.pressure}`:`P=?`;
     const hide=document.createElement('button'); hide.textContent='非表示'; hide.className='small';
-    hide.onclick=()=>{ const v=!(it.pipeMesh.visible||it.wallMesh.visible); it.pipeMesh.visible=v; it.wallMesh.visible=v; hide.textContent=v?'非表示':'表示'; };
+    hide.onclick=()=>{ 
+      const v=!(it.pipeMesh.visible||it.wallMesh.visible); 
+      it.pipeMesh.visible=v; it.wallMesh.visible=v; 
+      it.pickPipeMesh.visible=v; it.pickWallMesh.visible=v;
+      hide.textContent=v?'非表示':'表示';
+    };
     t.append(c,color,tag,hide); card.appendChild(t);
 
     const row1=document.createElement('div'); row1.className='row';
@@ -507,50 +537,91 @@ function buildList(orderByPressure=false){
   }
 }
 
-/* ==== picking & dragging ==== */
+/* ==== Pointer Events でのドラッグ ==== */
 const raycaster=new THREE.Raycaster(); const pointer=new THREE.Vector2();
-function pick(e){
+let draggingItem=null; let lastClientY=0;
+
+function pickFromClientXY(clientX, clientY){
   const rect=ui.canvas.getBoundingClientRect();
-  pointer.set((e.clientX-rect.left)/rect.width*2-1, -(e.clientY-rect.top)/rect.height*2+1);
+  pointer.set((clientX-rect.left)/rect.width*2-1, -(clientY-rect.top)/rect.height*2+1);
   raycaster.setFromCamera(pointer,camera);
-  const visibles=items.map(i=>i.activeMesh).filter(m=>m && m.visible);
-  const hits=raycaster.intersectObjects(visibles,false);
+
+  // 表示状態の activePick を対象に
+  const targets = items.map(i=>i.activePick).filter(m=>m && m.visible);
+  const hits = raycaster.intersectObjects(targets, false);
   if(!hits[0]) return null;
-  const obj=hits[0].object;
-  return items.find(it=> it.activeMesh===obj);
+  const obj = hits[0].object;
+  return items.find(it => it.activePick===obj);
 }
-let drag=null,lastY=0;
-function updateHud(e,h){
+function updateHudByClientXY(clientX, clientY, h){
   const rect=ui.canvas.getBoundingClientRect();
-  ui.dragHud.style.left=(e.clientX-rect.left)+'px';
-  ui.dragHud.style.top =(e.clientY-rect.top)+'px';
+  ui.dragHud.style.left = (clientX-rect.left)+'px';
+  ui.dragHud.style.top  = (clientY-rect.top)+'px';
   const maxH=currentMaxHeightStrict();
   const col=colorFromHeight(h,maxH);
   const r=Math.round(col.r*255), g=Math.round(col.g*255), b=Math.round(col.b*255);
-  ui.dragHud.style.background=`rgba(${r},${g},${b},.85)`;
+  ui.dragHud.style.background=`rgba(${r},${g},${b},.9)`;
   ui.dragHud.textContent=`Z = ${h.toFixed(2)}`;
 }
-ui.canvas.addEventListener('mousemove',e=>{
-  if(drag){
-    const dy=e.clientY-lastY; lastY=e.clientY;
-    let sens=parseFloat(ui.dragSensitivity.value); if(e.shiftKey) sens*=.2; if(e.altKey) sens*=3;
-    drag.height += -dy*sens;
-    if(drag.ui?.slider) drag.ui.slider.value=drag.height;
-    if(drag.ui?.num)    drag.ui.num.value=drag.height.toFixed(2);
-    updateHeightsAndColors();
-    updateHud(e,drag.height);
+
+ui.canvas.addEventListener('pointerdown',(e)=>{
+  if(e.button!==0) return;
+  const hit = pickFromClientXY(e.clientX, e.clientY);
+  if(hit){
+    draggingItem = hit;
+    lastClientY = e.clientY;
+    controls.enabled = false;
+    ui.canvas.classList.add('grabbing');
+    ui.dragHud.style.display='block';
+    updateHudByClientXY(e.clientX, e.clientY, draggingItem.height);
+    ui.canvas.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }
+});
+ui.canvas.addEventListener('pointermove',(e)=>{
+  if(draggingItem){
+    const dy = e.clientY - lastClientY; lastClientY = e.clientY;
+    let sens=parseFloat(ui.dragSensitivity.value);
+    if(e.shiftKey) sens*=.2; if(e.altKey) sens*=3.0;
+    draggingItem.height += -dy * sens;
+
+    // Z反映（可視＋当たり判定）
+    const s = parseFloat(ui.heightScale.value);
+    const z = draggingItem.height * s;
+    draggingItem.pipeMesh.position.z = z;
+    draggingItem.pickPipeMesh.position.z = z;
+    draggingItem.wallMesh.scale.z = Math.max(z, 0.0001);
+    draggingItem.pickWallMesh.scale.z = Math.max(z, 0.0001);
+    draggingItem.wallMesh.position.z = 0;
+    draggingItem.pickWallMesh.position.z = 0;
+
+    if(draggingItem.ui?.slider) draggingItem.ui.slider.value=draggingItem.height;
+    if(draggingItem.ui?.num)    draggingItem.ui.num.value=draggingItem.height.toFixed(2);
+
+    updateHeightsAndColors(); // 最高値が動きうるため毎回再着色
+    updateHudByClientXY(e.clientX, e.clientY, draggingItem.height);
+    e.preventDefault();
     return;
   }
-  const hit=pick(e); ui.canvas.classList.toggle('hovering',!!hit);
+  // ホバーカーソル
+  const over = pickFromClientXY(e.clientX, e.clientY);
+  ui.canvas.classList.toggle('hovering', !!over);
 });
-ui.canvas.addEventListener('mousedown',e=>{
-  if(e.button!==0) return;
-  const hit=pick(e);
-  if(hit){ drag=hit; lastY=e.clientY; controls.enabled=false; ui.canvas.classList.add('grabbing'); ui.dragHud.style.display='block'; updateHud(e,drag.height); }
-});
-addEventListener('mouseup',()=>{ drag=null; controls.enabled=true; ui.canvas.classList.remove('grabbing'); ui.dragHud.style.display='none'; });
+function endDrag(e){
+  if(draggingItem){
+    updateHeightsAndColors();
+    draggingItem=null;
+    controls.enabled=true;
+    ui.canvas.classList.remove('grabbing');
+    ui.dragHud.style.display='none';
+    if(e) ui.canvas.releasePointerCapture(e.pointerId);
+  }
+}
+ui.canvas.addEventListener('pointerup', endDrag);
+ui.canvas.addEventListener('pointercancel', endDrag);
+ui.canvas.addEventListener('pointerleave', (e)=>{ if(draggingItem) endDrag(e); });
 
-/* ==== background image (single definition!) ==== */
+/* ==== background image ==== */
 async function buildOrUpdateWeatherPlane(rawSvgText){
   if(!lastSvgDims) return; const {w,h}=lastSvgDims;
   const tex=await new THREE.TextureLoader().loadAsync('data:image/svg+xml;charset=utf-8,'+encodeURIComponent(rawSvgText));
@@ -641,17 +712,20 @@ function syncMode(){ applyModeVisibility(); updateHeightsAndColors(); }
 ui.modePipe.addEventListener('change', syncMode);
 ui.modeWall.addEventListener('change', syncMode);
 
+/* 直径/帯幅変更時：可視＋当たり判定を再生成 */
 ui.pipeDia.addEventListener('input', ()=>{
   const r=parseFloat(ui.pipeDia.value)/2;
   for(const it of items){
-    const old=it.pipeMesh.geometry; it.pipeMesh.geometry=buildTubeGeometry(it.pathPoints, r); old.dispose();
+    const oldV=it.pipeMesh.geometry; it.pipeMesh.geometry=buildTubeGeometry(it.pathPoints, r); oldV.dispose();
+    const oldP=it.pickPipeMesh.geometry; it.pickPipeMesh.geometry=buildTubeGeometry(it.pathPoints, r*PICK_TUBE_SCALE); oldP.dispose();
   }
   updateHeightsAndColors();
 });
 ui.wallThick.addEventListener('input', ()=>{
   const w=parseFloat(ui.wallThick.value);
   for(const it of items){
-    const old=it.wallMesh.geometry; it.wallMesh.geometry=buildWallRibbonGeometry(it.pathPoints, w); old.dispose();
+    const oldV=it.wallMesh.geometry; it.wallMesh.geometry=buildWallRibbonGeometry(it.pathPoints, w); oldV.dispose();
+    const oldP=it.pickWallMesh.geometry; it.pickWallMesh.geometry=buildWallRibbonGeometry(it.pathPoints, w*PICK_BAND_SCALE); oldP.dispose();
   }
 });
 ui.wallOpacity.addEventListener('input', ()=>{
@@ -673,7 +747,7 @@ ui.exportStl.addEventListener('click', ()=>{
   setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
 });
 
-/* ==== end defaults ==== */
+/* 初期可視 */
 basis.visible=true; gridXY.visible=true; gridZX.visible=true;
 </script>
 </body>
