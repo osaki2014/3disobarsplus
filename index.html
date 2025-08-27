@@ -1,1 +1,754 @@
-<!doctype html> <html lang="ja"> <head> <meta charset="utf-8" /> <meta name="viewport" content="width=device-width,initial-scale=1" /> <title>3D天気図ビューアープラス</title> <!-- three.js & addons via importmap --> <script type="importmap"> { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/" } } </script> <style> :root { --bg:#bfbfbf; --panel:#f8fafc; --muted:#6b7280; --border:#c8ced6; } html,body{height:100%;margin:0;background:var(--bg);color:#0f172a;font-family:system-ui,-apple-system,Segoe UI,Roboto,"Hiragino Kaku Gothic ProN",Meiryo,sans-serif} #app{display:grid;grid-template-columns:1fr 420px;grid-template-rows:56px 1fr;height:100%} #app[data-panel="closed"]{grid-template-columns:1fr 0} header{grid-column:1/-1;display:flex;align-items:center;gap:.6rem;padding:.5rem .9rem;border-bottom:1px solid var(--border);background:#f3f5f7} header h1{font-size:15px;margin:0} header .sp{flex:1} header a{font-size:13px;color:#0b57d0;text-decoration:none} header a:hover{text-decoration:underline} header button,header label,header select{background:#fff;border:1px solid var(--border);color:#0f172a;padding:.45rem .7rem;border-radius:.5rem;cursor:pointer;font-size:13px} header input[type=file]{display:none} #viewer{position:relative;background:#fff} #c{width:100%;height:100%} #overlay{position:absolute;left:12px;bottom:12px;padding:.45rem .6rem;background:#ffffffcc;border:1px solid var(--border);border-radius:.6rem;font-size:12px;color:#334155} #dragHud{position:absolute;pointer-events:none;transform:translate(-50%,-130%);padding:.25rem .45rem;font-size:12px;border-radius:.4rem;background:#0009;color:#fff;border:1px solid #0003;display:none;white-space:nowrap} #sidebar{background:var(--panel);border-left:1px solid var(--border);overflow:auto;padding:.8rem} #app[data-panel="closed"] #sidebar{display:none} .section{margin-bottom:1rem} .section h2{font-size:13px;margin:.3rem 0} .row{display:grid;grid-template-columns:1fr auto;gap:.6rem;align-items:center;margin:.45rem 0} .row label{font-size:12px;color:var(--muted)} #list{display:grid;gap:.6rem} .card{border:1px solid var(--border);background:#fff;border-radius:.6rem;padding:.6rem} .card .t{display:flex;gap:.5rem;align-items:center;margin-bottom:.3rem} .chip{display:inline-flex;align-items:center;gap:.4rem;border:1px solid var(--border);background:#f3f5f7;padding:.2rem .5rem;border-radius:999px;font-size:12px} .small{font-size:12px} .muted{color:#6b7280;font-size:12px;margin-left:.4rem} canvas.grabbing{cursor:grabbing} canvas.hovering{cursor:ns-resize} </style> </head> <body> <div id="app" data-panel="open"> <header> <h1>3D天気図ビューアープラス</h1> <a href="https://www.data.jma.go.jp/yoho/wxchart/quickmonthly.html" target="_blank" rel="noopener noreferrer"> 気象庁による過去の実況天気図 </a> <span class="sp"></span> <!-- 投影法 --> <select id="projection"> <option value="persp" selected>透視図法</option> <option value="ortho">正射影図法</option> </select> <!-- ビュー --> <select id="viewSelect"> <option value="all">斜め視点</option> <option value="top">真上（XY）</option> <option value="front">正面（ZX）</option> <option value="side">側面（ZY）</option> </select> <!-- ファイル --> <label for="file">SVG/SVGZを開く</label><input id="file" type="file" accept=".svg,.svgz,image/svg+xml,application/gzip"> <!-- STL --> <button id="exportStl">STLを書き出し</button> <!-- パネル --> <button id="panelToggle">パネル</button> </header> <div id="viewer"> <canvas id="c"></canvas> <div id="overlay">ドラッグ:回転 / 右ドラッグ:平行移動 / ホイール:ズーム / 線上ドラッグ:高さ変更（Shift=微 / Alt=粗）</div> <div id="dragHud"></div> </div> <aside id="sidebar"> <div class="section"> <h2>全体設定</h2> <div class="row"><label>背景色</label><input id="bgColor" type="color" value="#bfbfbf"></div> <div class="row"><label>基準（軸＆キューブ）表示</label><input id="basisVisible" type="checkbox" checked></div> <div class="row"><label>グリッド表示（XY/ZX）</label><input id="gridVisible" type="checkbox" checked></div> <div class="row"><label>高さ倍率（Z）</label><input id="heightScale" type="range" min="0.1" max="20" step="0.1" value="5"></div> <div class="row"><label>ドラッグ感度（px→高さ）</label><input id="dragSensitivity" type="range" min="0.05" max="2.0" step="0.05" value="0.3"></div> <div class="row"><label>サンプリング密度（新規読込時）</label><input id="sample" type="range" min="32" max="1000" step="1" value="240"></div> </div> <div class="section"> <h2>天気図画像（下敷き）</h2> <div class="row"><label>表示</label><input id="imgVisible" type="checkbox" checked></div> <div class="row"><label>不透明度</label><input id="imgOpacity" type="range" min="0" max="1" step="0.01" value="0.85"></div> <div class="row"><label>高さ（Zオフセット）</label><input id="imgHeight" type="range" min="-200" max="200" step="0.1" value="-0.1"></div> </div> <div class="section"> <h2>自動高さ（ラベル順・色も連動）</h2> <div class="row"><label>有効</label><input id="autoMode" type="checkbox" checked></div> <div class="row"><label>間隔倍率</label><input id="gapFactor" type="range" min="0.2" max="3" step="0.05" value="1"></div> <div class="row"><label>平坦 ←→ 初期間隔</label><input id="autoBlend" type="range" min="0" max="1" step="0.01" value="1"></div> <div class="row"><span class="muted" id="labelInfo">ラベル未解析</span><span></span></div> </div> <div class="section"> <h2>表示モード</h2> <div class="row"><label>パイプ（Tube）</label><input id="modePipe" type="checkbox" checked></div> <div class="row"><label>壁（Wall：帯押し出し）</label><input id="modeWall" type="checkbox"></div> <!-- ★初期直径を太めに（6.0） --> <div class="row"><label>パイプ直径</label><input id="pipeDia" type="range" min="0.2" max="12" step="0.1" value="6.0"></div> <div class="row"><label>壁の厚さ（帯幅）</label><input id="wallThick" type="range" min="0.2" max="16" step="0.1" value="2.5"></div> <div class="row"><label>壁の不透明度</label><input id="wallOpacity" type="range" min="0" max="1" step="0.01" value="0.9"></div> <div class="row"><span class="muted">※パイプ/壁は同時表示可。ドラッグは表示中の形状に有効。</span><span></span></div> </div> <div class="section"> <h2>等圧線リスト</h2> <div id="list"></div> </div> </aside> </div> <script type="module"> import * as THREE from 'three'; import { OrbitControls } from 'three/addons/controls/OrbitControls.js'; import { SVGLoader } from 'three/addons/loaders/SVGLoader.js'; import { STLExporter } from 'three/addons/exporters/STLExporter.js'; import * as pako from 'https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.esm.mjs'; import { FontLoader } from 'three/addons/loaders/FontLoader.js'; import { TextGeometry } from 'three/addons/geometries/TextGeometry.js'; /* ========= タッチ最適化：当たり判定の太さ係数 ========= */ const PICK_TUBE_SCALE = 2.8; // パイプの当たり判定：見た目半径×これ const PICK_BAND_SCALE = 1.8; // 壁（帯）の当たり判定：帯幅×これ（より広く） /* ==== DOM refs ==== */ const ui = { app: document.getElementById('app'), canvas: document.getElementById('c'), dragHud: document.getElementById('dragHud'), projection: document.getElementById('projection'), viewSelect: document.getElementById('viewSelect'), file: document.getElementById('file'), exportStl: document.getElementById('exportStl'), panelToggle: document.getElementById('panelToggle'), bgColor: document.getElementById('bgColor'), basisVisible: document.getElementById('basisVisible'), gridVisible: document.getElementById('gridVisible'), heightScale: document.getElementById('heightScale'), dragSensitivity: document.getElementById('dragSensitivity'), sample: document.getElementById('sample'), imgVisible: document.getElementById('imgVisible'), imgOpacity: document.getElementById('imgOpacity'), imgHeight: document.getElementById('imgHeight'), autoMode: document.getElementById('autoMode'), gapFactor: document.getElementById('gapFactor'), autoBlend: document.getElementById('autoBlend'), labelInfo: document.getElementById('labelInfo'), modePipe: document.getElementById('modePipe'), modeWall: document.getElementById('modeWall'), pipeDia: document.getElementById('pipeDia'), wallThick: document.getElementById('wallThick'), wallOpacity: document.getElementById('wallOpacity'), list: document.getElementById('list') }; /* ==== renderer / scene ==== */ const renderer = new THREE.WebGLRenderer({canvas: ui.canvas, antialias:true}); renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.outputColorSpace = THREE.SRGBColorSpace; const scene = new THREE.Scene(); scene.background = new THREE.Color(ui.bgColor.value); /* ==== cameras & controls ==== */ let controls, camera; const perspCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 50000); perspCamera.up.set(0,0,1); perspCamera.position.set(450,300,200); const orthoCamera = new THREE.OrthographicCamera(-500,500,500,-500,-50000,50000); orthoCamera.up.set(0,0,1); orthoCamera.position.copy(perspCamera.position); function makeControls(cam){ if(controls) controls.dispose(); controls = new OrbitControls(cam, renderer.domElement); controls.enableDamping=true; controls.screenSpacePanning=false; } function setOrthoFrustum(){ const v=document.getElementById('viewer'); const aspect=v.clientWidth/v.clientHeight; const box=new THREE.Box3().setFromObject(chartGroup); const s=new THREE.Vector3(); box.getSize(s); const maxDim=Math.max(s.x,s.y,s.z,100); const halfH=maxDim*0.7, halfW=halfH*aspect; orthoCamera.left=-halfW; orthoCamera.right=halfW; orthoCamera.top=halfH; orthoCamera.bottom=-halfH; orthoCamera.near=-maxDim*10; orthoCamera.far=maxDim*10; orthoCamera.updateProjectionMatrix(); } function usePerspective(){ perspCamera.position.copy(camera.position); camera=perspCamera; makeControls(camera); controls.target.copy(_target); controls.update(); } function useOrthographic(){ orthoCamera.position.copy(camera.position); setOrthoFrustum(); camera=orthoCamera; makeControls(camera); controls.target.copy(_target); controls.update(); } let _target = new THREE.Vector3(); camera = perspCamera; makeControls(camera); /* ==== lights / grid / basis ==== */ scene.add(new THREE.AmbientLight(0xffffff,0.55)); const dl=new THREE.DirectionalLight(0xffffff,0.9); dl.position.set(400,300,500); scene.add(dl); const gridXY=new THREE.GridHelper(1000,100,0xffffff,0xffffff); gridXY.rotation.x=Math.PI/2; scene.add(gridXY); const gridZX=new THREE.GridHelper(1000,100,0xffffff,0xffffff); gridZX.material.opacity=.5; gridZX.material.transparent=true; scene.add(gridZX); const basis=new THREE.Group(); basis.add(new THREE.ArrowHelper(new THREE.Vector3(1,0,0),new THREE.Vector3(),300,0xff0000,50,20)); basis.add(new THREE.ArrowHelper(new THREE.Vector3(0,1,0),new THREE.Vector3(),300,0x00ff00,50,20)); basis.add(new THREE.ArrowHelper(new THREE.Vector3(0,0,1),new THREE.Vector3(),300,0x0000ff,50,20)); const fontLoader=new FontLoader(); fontLoader.load('https://threejs.org/examples/fonts/helvetiker_regular.typeface.json',(font)=>{ const mk=(ch,col,pos)=>{ const g=new TextGeometry(ch,{font,size:40,height:5}); g.computeBoundingBox(); const m=new THREE.MeshBasicMaterial({color:col}); const mesh=new THREE.Mesh(g,m); const w=g.boundingBox.max.x-g.boundingBox.min.x; mesh.position.set(pos.x-w/2,pos.y,pos.z); basis.add(mesh); }; mk('X',0xff0000,{x:320,y:-20,z:0}); mk('Y',0x00ff00,{x:0,y:320,z:0}); mk('Z',0x0000ff,{x:0,y:-20,z:320}); }); const cube=new THREE.Mesh(new THREE.BoxGeometry(60,60,60),[ new THREE.MeshStandardMaterial({color:0xff0000,roughness:.4,metalness:.1}), new THREE.MeshStandardMaterial({color:0xff0000,roughness:.4,metalness:.1}), new THREE.MeshStandardMaterial({color:0x00ff00,roughness:.4,metalness:.1}), new THREE.MeshStandardMaterial({color:0x00ff00,roughness:.4,metalness:.1}), new THREE.MeshStandardMaterial({color:0x0000ff,roughness:.4,metalness:.1}), new THREE.MeshStandardMaterial({color:0x0000ff,roughness:.4,metalness:.1}), ]); cube.position.set(0,0,30); basis.add(cube); scene.add(basis); /* ==== containers ==== */ const chartGroup=new THREE.Group(); scene.add(chartGroup); const rootLines=new THREE.Group(); chartGroup.add(rootLines); /* items 構造： { pipeMesh, wallMesh, // 可視メッシュ pickPipeMesh, pickWallMesh, // 当たり判定メッシュ（透明で太い） activeMesh, activePick, // 現在の表示/ピック対象 pathPoints, height, ui, centroid, pressure, area, autoTarget } */ let items=[]; let weatherPlane=null, lastSvgDims=null, lastRawSvgText=""; /* ==== render loop / resize ==== */ function resize(){ const v=document.getElementById('viewer'); renderer.setSize(v.clientWidth,v.clientHeight,false); if(camera.isPerspectiveCamera){ camera.aspect=v.clientWidth/v.clientHeight; camera.updateProjectionMatrix(); } else setOrthoFrustum(); } addEventListener('resize',resize); resize(); (function anim(){ requestAnimationFrame(anim); controls.update(); renderer.render(scene,camera); })(); /* ==== views ==== */ function fitView(target=chartGroup){ const b=new THREE.Box3().setFromObject(target); const sz=new THREE.Vector3(), cen=new THREE.Vector3(); b.getSize(sz); b.getCenter(cen); if(!(isFinite(sz.x)&&isFinite(sz.y))) return; _target.copy(cen); if(camera.isPerspectiveCamera){ const maxDim=Math.max(sz.x,sz.y,sz.z); const dist=maxDim*1.2/Math.tan(THREE.MathUtils.degToRad(perspCamera.fov*0.5)); const dir=new THREE.Vector3(.75,.55,.35).normalize(); camera.position.copy(cen.clone().add(dir.multiplyScalar(dist))); camera.near=Math.max(.1,dist/1000); camera.far=dist*1000; camera.updateProjectionMatrix(); }else{ setOrthoFrustum(); camera.position.copy(new THREE.Vector3(.75,.55,.35).normalize().multiplyScalar(Math.max(sz.x,sz.y,sz.z)*2).add(cen)); } controls.target.copy(cen); controls.update(); } function viewTop(){ const b=new THREE.Box3().setFromObject(chartGroup),c=new THREE.Vector3(),s=new THREE.Vector3(); b.getCenter(c); b.getSize(s); const dist=Math.max(s.x,s.y,s.z)*2+1; camera.position.set(c.x,c.y,c.z+dist); _target.copy(c); controls.target.copy(c); controls.update(); if(!camera.isPerspectiveCamera) setOrthoFrustum(); } function viewFront(){ const b=new THREE.Box3().setFromObject(chartGroup),c=new THREE.Vector3(),s=new THREE.Vector3(); b.getCenter(c); b.getSize(s); const dist=Math.max(s.x,s.y,s.z)*2+1; camera.position.set(c.x,c.y-dist,c.z); _target.copy(c); controls.target.copy(c); controls.update(); if(!camera.isPerspectiveCamera) setOrthoFrustum(); } function viewSide(){ const b=new THREE.Box3().setFromObject(chartGroup),c=new THREE.Vector3(),s=new THREE.Vector3(); b.getCenter(c); b.getSize(s); const dist=Math.max(s.x,s.y,s.z)*2+1; camera.position.set(c.x+dist,c.y,c.z); _target.copy(c); controls.target.copy(c); controls.update(); if(!camera.isPerspectiveCamera) setOrthoFrustum(); } /* ==== helpers (color, max) ==== */ function colorFromHeight(h,maxH){ if(maxH<=0 || h<=0) return new THREE.Color(0xff0000); const t=Math.min(Math.max(h/maxH,0),1); const c=new THREE.Color(); c.setHSL((2/3)*t,1,0.5); return c; } function currentMaxHeightStrict(){ if(!items.length) return 0; let m=0; for(const it of items) if(it.height>m) m=it.height; return m; } /* ==== geometry builders ==== */ function buildTubeGeometry(points, radius){ const curve=new THREE.CatmullRomCurve3(points,false,'centripetal',0.5); const seg=Math.max(16, Math.min(2048, Math.floor(points.length*1.5))); return new THREE.TubeGeometry(curve, seg, radius, 12, false); } /* ラウンドオフセット帯（Z=0..1 押し出し） */ function buildWallRibbonGeometry(points, width, miterEps=0.25){ const n = points.length; if(n < 2) return new THREE.BoxGeometry(0,0,0); const half = width * 0.5; const dir = new Array(n); for(let i=0;i<n;i++){ const a = points[Math.max(0,i-1)], b = points[Math.min(n-1,i+1)]; const vx = b.x - a.x, vy = b.y - a.y; const l = Math.hypot(vx,vy) || 1; dir[i] = {x:vx/l, y:vy/l}; } const left = new Array(n), right = new Array(n); for(let i=0;i<n;i++){ const t0 = dir[Math.max(0,i-1)], t1 = dir[Math.min(n-1,i+1)]; const n0 = {x:-t0.y, y:t0.x}, n1 = {x:-t1.y, y:t1.x}; let ax = n0.x + n1.x, ay = n0.y + n1.y; const al = Math.hypot(ax,ay); if(al < 1e-6){ ax = n0.x; ay = n0.y; } else { ax/=al; ay/=al; } const dot = ax*n0.x + ay*n0.y; const scale = half / Math.max(Math.abs(dot), miterEps); const p = points[i]; left[i] = new THREE.Vector3(p.x + ax*scale, p.y + ay*scale, 0); right[i] = new THREE.Vector3(p.x - ax*scale, p.y - ay*scale, 0); } const positions = new Float32Array(n*4*3); const uvs = new Float32Array(n*4*2); const id = (i,k)=> i*4+k; for(let i=0;i<n;i++){ const L=left[i], R=right[i]; positions.set([L.x,L.y,0], (id(i,0))*3); positions.set([R.x,R.y,0], (id(i,1))*3); positions.set([L.x,L.y,1], (id(i,2))*3); positions.set([R.x,R.y,1], (id(i,3))*3); const u = i/(n-1); uvs.set([u,0], (id(i,0))*2); uvs.set([u,1], (id(i,1))*2); uvs.set([u,0], (id(i,2))*2); uvs.set([u,1], (id(i,3))*2); } const indices=[]; for(let i=0;i<n-1;i++){ const aLB=id(i,0), aRB=id(i,1), aLT=id(i,2), aRT=id(i,3); const bLB=id(i+1,0), bRB=id(i+1,1), bLT=id(i+1,2), bRT=id(i+1,3); indices.push(aLB,aLT,bLT, aLB,bLT,bLB); // 左 indices.push(aRB,bRB,bRT, aRB,bRT,aRT); // 右 indices.push(aLT,aRT,bRT, aLT,bRT,bLT); // 上 indices.push(aLB,bLB,bRB, aLB,bRB,aRB); // 下 } const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(positions,3)); g.setAttribute('uv', new THREE.BufferAttribute(uvs,2)); g.setIndex(indices); g.computeVertexNormals(); return g; } /* ==== SVG → items ==== */ function centroidXY(pts){ let sx=0,sy=0; for(const p of pts){sx+=p.x;sy+=p.y;} const n=pts.length||1; return {x:sx/n,y:sy/n}; } function polygonArea(pts){ let a=0; for(let i=0;i<pts.length;i++){ const p=pts[i], q=pts[(i+1)%pts.length]; a += p.x*q.y - q.x*p.y; } return Math.abs(a)/2; } async function loadSVGFromString(svgText){ rootLines.clear(); items=[]; ui.list.innerHTML=''; const loader=new SVGLoader(); let data; try{ data=loader.parse(svgText); }catch(e){ console.error('SVG parse 失敗',e); return; } const linesGroup=new THREE.Group(); const sampleN=parseInt(ui.sample.value,10); const radius=parseFloat(ui.pipeDia.value)/2; const bandW =parseFloat(ui.wallThick.value); const wallOp=parseFloat(ui.wallOpacity.value); for(const p of data.paths){ const style=p.userData?.style||{}; const stroke=(style.stroke && style.stroke!=='none')?style.stroke:"#9aa4b2"; for(const sub of p.subPaths){ const pts2=sub.getPoints(Math.max(2,sampleN)); if(pts2.length<2) continue; const pts3=pts2.map(pt=>new THREE.Vector3(+pt.x, -pt.y, 0)); // Y反転 // 可視メッシュ const pipeGeom = buildTubeGeometry(pts3, radius); const pipeMat = new THREE.MeshStandardMaterial({color:new THREE.Color(stroke), roughness:.6, metalness:.06, side:THREE.DoubleSide}); const pipeMesh = new THREE.Mesh(pipeGeom, pipeMat); const wallGeom = buildWallRibbonGeometry(pts3, bandW); const wallMat = new THREE.MeshStandardMaterial({color:new THREE.Color(stroke), roughness:.7, metalness:.05, side:THREE.DoubleSide, transparent: wallOp<1, opacity: wallOp}); const wallMesh = new THREE.Mesh(wallGeom, wallMat); // 当たり判定メッシュ（透明で太め） const pickPipeGeom = buildTubeGeometry(pts3, radius * PICK_TUBE_SCALE); const pickPipeMat = new THREE.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0.001, depthWrite:false}); const pickPipeMesh = new THREE.Mesh(pickPipeGeom, pickPipeMat); pickPipeMesh.renderOrder = -1000; const pickWallGeom = buildWallRibbonGeometry(pts3, bandW * PICK_BAND_SCALE); const pickWallMat = new THREE.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0.001, depthWrite:false}); const pickWallMesh = new THREE.Mesh(pickWallGeom, pickWallMat); pickWallMesh.renderOrder = -1000; const cen=centroidXY(pts2), area=polygonArea(pts2); items.push({ pipeMesh, wallMesh, pickPipeMesh, pickWallMesh, activeMesh:null, activePick:null, pathPoints:pts3, height:0, ui:{}, centroid:cen, pressure:undefined, area, autoTarget:0 }); linesGroup.add(pipeMesh, wallMesh, pickPipeMesh, pickWallMesh); } } // 中心化＆スケール const box=new THREE.Box3().setFromObject(linesGroup); const cen3=new THREE.Vector3(), sz=new THREE.Vector3(); box.getCenter(cen3); box.getSize(sz); linesGroup.position.x=-cen3.x; linesGroup.position.y=-cen3.y; const scale=600/Math.max(sz.x,sz.y); chartGroup.scale.setScalar(isFinite(scale)&&scale>0?scale:1); rootLines.add(linesGroup); await assignPressuresFromLabelsOrAreas(); applyModeVisibility(); if (ui.autoMode.checked) applyAutoHeights(); buildList(true); updateHeightsAndColors(); fitView(chartGroup); } /* ==== labels or area ==== */ function parseTranslate(tf){ let tx=0,ty=0; if(!tf) return {tx,ty}; const m=tf.match(/matrix\(([^)]+)\)/); if(m){const a=m[1].split(/[ ,]+/).map(Number); if(a.length===6&&a.every(n=>isFinite(n))){tx+=a[4];ty+=a[5];}} const t=tf.match(/translate\(([^)]+)\)/); if(t){const a=t[1].split(/[ ,]+/).map(Number); if(a.length>=1) tx+=a[0]||0; if(a.length>=2) ty+=a[1]||0;} return {tx,ty}; } function estimateXY(el){ let x=parseFloat(el.getAttribute("x")||"0"), y=parseFloat(el.getAttribute("y")||"0"), cur=el; while(cur&&cur.nodeType===1){ const tf=cur.getAttribute&&cur.getAttribute("transform"); const {tx,ty}=parseTranslate(tf||""); x+=tx; y+=ty; cur=cur.parentNode; } return {x,y}; } function readPressureLabels(svgText){ const doc=new DOMParser().parseFromString(svgText,"image/svg+xml"); const svg=doc.querySelector("svg"); if(!svg) return []; const labels=[]; for(const t of doc.querySelectorAll("text")){ const raw=(t.textContent||"").trim(); const m=raw.match(/(-?\d{3,4})/); if(!m) continue; const val=parseInt(m[1],10); if(!isFinite(val)||val<800||val>1100) continue; const {x,y}=estimateXY(t); labels.push({x,y,value:val}); } return labels; } async function assignPressuresFromLabelsOrAreas(){ const labs=readPressureLabels(lastRawSvgText); if(labs.length){ ui.labelInfo.textContent=検出ラベル: ${labs.length} 個; for(const it of items){ const {x,y}=it.centroid; let best=null,bd=Infinity; for(const lb of labs){ const d=(lb.x-x)**2+(lb.y-y)**2; if(d<bd){bd=d; best=lb;} } it.pressure=best?.value; } }else{ ui.labelInfo.textContent='ラベルなし：面積ベースで自動配置'; const arr=items.slice().sort((a,b)=>a.area-b.area); arr.forEach((it,idx)=>{ it.pressure=idx; }); } } /* ==== auto heights ==== */ function applyAutoHeights(){ const gf=parseFloat(ui.gapFactor.value); const blend=parseFloat(ui.autoBlend.value); const maxH=100*gf; const withP=items.filter(it=>isFinite(it.pressure)).sort((a,b)=>a.pressure-b.pressure); const n=withP.length; if(!n){ items.forEach(it=>it.height=0); updateHeightsAndColors(); return; } withP.forEach((it,idx)=>{ const t=(n===1)?0:(idx/(n-1)); it.autoTarget=t*maxH; }); for(const it of items){ it.height=(it.autoTarget||0)*blend; } updateHeightsAndColors(); } /* ==== height & color update ==== */ function updateHeightsAndColors(){ const s=parseFloat(ui.heightScale.value); const maxH=currentMaxHeightStrict(); // その時点の最高で正規化 for(const it of items){ const z = it.height * s; // 可視メッシュのZ反映 it.pipeMesh.position.z = z; it.wallMesh.scale.z = Math.max(z, 0.0001); it.wallMesh.position.z = 0; // 当たり判定メッシュも追従 it.pickPipeMesh.position.z = z; it.pickWallMesh.scale.z = Math.max(z, 0.0001); it.pickWallMesh.position.z = 0; // 色 const col = colorFromHeight(it.height, maxH); it.pipeMesh.material.color.copy(col); it.wallMesh.material.color.copy(col); if(it.ui?.color) it.ui.color.value = #${col.getHexString()}; } } /* ==== mode visibility ==== */ function applyModeVisibility(){ const showPipe=ui.modePipe.checked; const showWall=ui.modeWall.checked; for(const it of items){ it.pipeMesh.visible = showPipe; it.wallMesh.visible = showWall; it.pickPipeMesh.visible = showPipe; it.pickWallMesh.visible = showWall; // ドラッグ対象は「表示中」を優先（壁がONなら壁、でなければパイプ） if (showWall){ it.activeMesh = it.wallMesh; it.activePick = it.pickWallMesh; } else { it.activeMesh = it.pipeMesh; it.activePick = it.pickPipeMesh; } } } /* ==== list & interactions ==== */ function buildList(orderByPressure=false){ ui.list.innerHTML=''; let arr=items.slice(); if(orderByPressure){ arr.sort((a,b)=>{ const ap=isFinite(a.pressure)?a.pressure:Infinity; const bp=isFinite(b.pressure)?b.pressure:Infinity; return ap-bp; }); } let i=0; for(const it of arr){ const card=document.createElement('div'); card.className='card'; const t=document.createElement('div'); t.className='t'; const c=document.createElement('span'); c.className='chip'; c.textContent=L${(++i).toString().padStart(3,'0')}; const color=document.createElement('input'); color.type='color'; color.disabled=true; color.value='#9aa4b2'; const tag=document.createElement('span'); tag.className='small muted'; tag.textContent=isFinite(it.pressure)?P=${it.pressure}:P=?; const hide=document.createElement('button'); hide.textContent='非表示'; hide.className='small'; hide.onclick=()=>{ const v=!(it.pipeMesh.visible||it.wallMesh.visible); it.pipeMesh.visible=v; it.wallMesh.visible=v; it.pickPipeMesh.visible=v; it.pickWallMesh.visible=v; hide.textContent=v?'非表示':'表示'; }; t.append(c,color,tag,hide); card.appendChild(t); const row1=document.createElement('div'); row1.className='row'; const lab=document.createElement('label'); lab.textContent='高さ（Z）'; const slider=document.createElement('input'); slider.type='range'; slider.min=-2000; slider.max=2000; slider.step=0.1; slider.value=it.height; slider.oninput=()=>{ it.height=parseFloat(slider.value); if(it.ui?.num) it.ui.num.value=it.height.toFixed(2); updateHeightsAndColors(); }; row1.append(lab,slider); card.appendChild(row1); const row2=document.createElement('div'); row2.className='row'; const hint=document.createElement('span'); hint.className='small'; hint.textContent='（手動でも調整可）'; const num=document.createElement('input'); num.type='number'; num.className='small'; num.step=0.1; num.style.width='100px'; num.value=it.height.toFixed(2); num.onchange=()=>{ const v=parseFloat(num.value)||0; it.height=v; slider.value=v; updateHeightsAndColors(); }; row2.append(hint,num); card.appendChild(row2); it.ui={slider,num,color}; ui.list.appendChild(card); } } /* ==== Pointer Events でのドラッグ ==== */ const raycaster=new THREE.Raycaster(); const pointer=new THREE.Vector2(); let draggingItem=null; let lastClientY=0; function pickFromClientXY(clientX, clientY){ const rect=ui.canvas.getBoundingClientRect(); pointer.set((clientX-rect.left)/rect.width*2-1, -(clientY-rect.top)/rect.height*2+1); raycaster.setFromCamera(pointer,camera); // 表示状態の activePick を対象に const targets = items.map(i=>i.activePick).filter(m=>m && m.visible); const hits = raycaster.intersectObjects(targets, false); if(!hits[0]) return null; const obj = hits[0].object; return items.find(it => it.activePick===obj); } function updateHudByClientXY(clientX, clientY, h){ const rect=ui.canvas.getBoundingClientRect(); ui.dragHud.style.left = (clientX-rect.left)+'px'; ui.dragHud.style.top = (clientY-rect.top)+'px'; const maxH=currentMaxHeightStrict(); const col=colorFromHeight(h,maxH); const r=Math.round(col.r*255), g=Math.round(col.g*255), b=Math.round(col.b*255); ui.dragHud.style.background=rgba(${r},${g},${b},.9); ui.dragHud.textContent=Z = ${h.toFixed(2)}; } ui.canvas.addEventListener('pointerdown',(e)=>{ if(e.button!==0) return; const hit = pickFromClientXY(e.clientX, e.clientY); if(hit){ draggingItem = hit; lastClientY = e.clientY; controls.enabled = false; ui.canvas.classList.add('grabbing'); ui.dragHud.style.display='block'; updateHudByClientXY(e.clientX, e.clientY, draggingItem.height); ui.canvas.setPointerCapture(e.pointerId); e.preventDefault(); } }); ui.canvas.addEventListener('pointermove',(e)=>{ if(draggingItem){ const dy = e.clientY - lastClientY; lastClientY = e.clientY; let sens=parseFloat(ui.dragSensitivity.value); if(e.shiftKey) sens*=.2; if(e.altKey) sens*=3.0; draggingItem.height += -dy * sens; // Z反映（可視＋当たり判定） const s = parseFloat(ui.heightScale.value); const z = draggingItem.height * s; draggingItem.pipeMesh.position.z = z; draggingItem.pickPipeMesh.position.z = z; draggingItem.wallMesh.scale.z = Math.max(z, 0.0001); draggingItem.pickWallMesh.scale.z = Math.max(z, 0.0001); draggingItem.wallMesh.position.z = 0; draggingItem.pickWallMesh.position.z = 0; if(draggingItem.ui?.slider) draggingItem.ui.slider.value=draggingItem.height; if(draggingItem.ui?.num) draggingItem.ui.num.value=draggingItem.height.toFixed(2); updateHeightsAndColors(); // 最高値が動きうるため毎回再着色 updateHudByClientXY(e.clientX, e.clientY, draggingItem.height); e.preventDefault(); return; } // ホバーカーソル const over = pickFromClientXY(e.clientX, e.clientY); ui.canvas.classList.toggle('hovering', !!over); }); function endDrag(e){ if(draggingItem){ updateHeightsAndColors(); draggingItem=null; controls.enabled=true; ui.canvas.classList.remove('grabbing'); ui.dragHud.style.display='none'; if(e) ui.canvas.releasePointerCapture(e.pointerId); } } ui.canvas.addEventListener('pointerup', endDrag); ui.canvas.addEventListener('pointercancel', endDrag); ui.canvas.addEventListener('pointerleave', (e)=>{ if(draggingItem) endDrag(e); }); /* ==== background image ==== */ async function buildOrUpdateWeatherPlane(rawSvgText){ if(!lastSvgDims) return; const {w,h}=lastSvgDims; const tex=await new THREE.TextureLoader().loadAsync('data:image/svg+xml;charset=utf-8,'+encodeURIComponent(rawSvgText)); tex.colorSpace=THREE.SRGBColorSpace; tex.anisotropy=renderer.capabilities.getMaxAnisotropy(); tex.flipY=false; const mat=new THREE.MeshBasicMaterial({map:tex, transparent:true, opacity:parseFloat(ui.imgOpacity.value), side:THREE.DoubleSide}); const geom=new THREE.PlaneGeometry(w,h); if(!weatherPlane){ weatherPlane=new THREE.Mesh(geom,mat); weatherPlane.renderOrder=-1; chartGroup.add(weatherPlane); } else{ weatherPlane.geometry.dispose(); weatherPlane.material.map?.dispose(); weatherPlane.material.dispose(); weatherPlane.geometry=geom; weatherPlane.material=mat; } weatherPlane.scale.y = -Math.abs(weatherPlane.scale.y); applyImageUI(); } function applyImageUI(){ if(!weatherPlane) return; weatherPlane.visible=ui.imgVisible.checked; weatherPlane.material.opacity=parseFloat(ui.imgOpacity.value); const s=parseFloat(ui.heightScale.value); weatherPlane.position.z=parseFloat(ui.imgHeight.value)*s; } ['imgVisible','imgOpacity','imgHeight','heightScale'].forEach(id=>ui[id].addEventListener('input',applyImageUI)); /* ==== file I/O ==== */ function tryDecodeUtf8(u8){ try{ const txt=new TextDecoder("utf-8",{fatal:false}).decode(u8); if(txt.includes("<svg")||txt.includes("<?xml")) return txt; }catch{} return null; } async function readSvgOrSvgz(file){ const buf=await file.arrayBuffer(); const u8=new Uint8Array(buf); const plain=tryDecodeUtf8(u8); if(plain) return plain; const isGzip=u8.length>=2 && u8[0]===0x1f && u8[1]===0x8b; if(isGzip || (file.name||"").toLowerCase().endsWith(".svgz")){ try{ const t=new TextDecoder("utf-8").decode(pako.ungzip(u8)); if(t.includes("<svg")) return t; }catch(e1){ try{ const t=new TextDecoder("utf-8").decode(pako.inflate(u8)); if(t.includes("<svg")) return t; }catch(e2){ try{ const t=new TextDecoder("utf-8").decode(pako.inflateRaw(u8)); if(t.includes("<svg")) return t; }catch(e3){} } } } const fb=new TextDecoder("utf-8",{fatal:false}).decode(u8); if(fb && fb.includes("<svg")) return fb; throw new Error("SVGZの解凍に失敗しました。"); } function readSvgDims(svgEl){ const vb=svgEl.getAttribute("viewBox"); if(vb){ const a=vb.trim().split(/\s+|,/).map(Number); if(a.length===4&&a.every(n=>isFinite(n))) return {w:a[2],h:a[3]}; } const w=parseFloat((svgEl.getAttribute("width")||"").replace(/[^\d.]+/g,"")); const h=parseFloat((svgEl.getAttribute("height")||"").replace(/[^\d.]+/g,"")); if(isFinite(w)&&isFinite(h)&&w>0&&h>0) return {w,h}; return {w:1000,h:1000}; } function extractIsobarsOnly(svgText){ const doc=new DOMParser().parseFromString(svgText,"image/svg+xml"); const svg=doc.querySelector("svg"); if(!svg) return svgText; lastSvgDims=readSvgDims(svg); const viewBox=svg.getAttribute("viewBox")||null, width=svg.getAttribute("width")||null, height=svg.getAttribute("height")||null; const contours=svg.querySelectorAll('g#weatherChart g.contour'); const outDoc=document.implementation.createDocument("http://www.w3.org/2000/svg","svg",null); const outSvg=outDoc.documentElement; outSvg.setAttribute("xmlns","http://www.w3.org/2000/svg"); if(viewBox) outSvg.setAttribute("viewBox",viewBox); if(width) outSvg.setAttribute("width",width); if(height) outSvg.setAttribute("height",height); const DEFAULT_STROKE="#9aa4b2"; contours.forEach(cont=>{ cont.querySelectorAll("path, polyline, circle, rect, ellipse").forEach(el=>{ const dup=el.cloneNode(true); dup.setAttribute("fill","none"); if(!dup.getAttribute("stroke")||dup.getAttribute("stroke")==="none") dup.setAttribute("stroke",DEFAULT_STROKE); if(!dup.getAttribute("stroke-width")) dup.setAttribute("stroke-width","1"); outSvg.appendChild(dup); }); }); if(!outSvg.firstElementChild) return svgText; return new XMLSerializer().serializeToString(outSvg); } ui.file.addEventListener('change', async (e)=>{ const f=e.target.files?.[0]; if(!f) return; try{ const raw=await readSvgOrSvgz(f); lastRawSvgText=raw; const doc=new DOMParser().parseFromString(raw,"image/svg+xml"); const svg=doc.querySelector("svg"); if(svg) lastSvgDims=readSvgDims(svg); await buildOrUpdateWeatherPlane(raw); const only=extractIsobarsOnly(raw); await loadSVGFromString(only); fitView(chartGroup); }catch(err){ console.error('読み込みエラー',err); } }); /* ==== UI bindings ==== */ ui.bgColor.addEventListener('input', e=>{ scene.background=new THREE.Color(e.target.value); }); ui.basisVisible.addEventListener('change', e=>{ basis.visible=e.target.checked; }); ui.gridVisible.addEventListener('change', e=>{ const v=e.target.checked; gridXY.visible=v; gridZX.visible=v; }); ui.heightScale.addEventListener('input', ()=>{ updateHeightsAndColors(); applyImageUI(); }); ui.viewSelect.addEventListener('change', e=>{ const v=e.target.value; if(v==='top') viewTop(); else if(v==='front') viewFront(); else if(v==='side') viewSide(); else fitView(chartGroup); }); ui.projection.addEventListener('change', e=>{ (e.target.value==='ortho')?useOrthographic():usePerspective(); fitView(chartGroup); }); ui.panelToggle.addEventListener('click', ()=>{ const open=ui.app.getAttribute('data-panel')!=='closed'; ui.app.setAttribute('data-panel', open?'closed':'open'); setTimeout(resize,0); }); ui.autoMode.addEventListener('change', ()=>{ if(ui.autoMode.checked) applyAutoHeights(); else { for(const it of items){ it.height=0; if(it.ui?.slider) it.ui.slider.value=0; if(it.ui?.num) it.ui.num.value='0.00'; } updateHeightsAndColors(); }}); ui.gapFactor.addEventListener('input', ()=>{ if(ui.autoMode.checked) applyAutoHeights(); }); ui.autoBlend.addEventListener('input', ()=>{ if(ui.autoMode.checked) applyAutoHeights(); }); function syncMode(){ applyModeVisibility(); updateHeightsAndColors(); } ui.modePipe.addEventListener('change', syncMode); ui.modeWall.addEventListener('change', syncMode); /* 直径/帯幅変更時：可視＋当たり判定を再生成 */ ui.pipeDia.addEventListener('input', ()=>{ const r=parseFloat(ui.pipeDia.value)/2; for(const it of items){ const oldV=it.pipeMesh.geometry; it.pipeMesh.geometry=buildTubeGeometry(it.pathPoints, r); oldV.dispose(); const oldP=it.pickPipeMesh.geometry; it.pickPipeMesh.geometry=buildTubeGeometry(it.pathPoints, r*PICK_TUBE_SCALE); oldP.dispose(); } updateHeightsAndColors(); }); ui.wallThick.addEventListener('input', ()=>{ const w=parseFloat(ui.wallThick.value); for(const it of items){ const oldV=it.wallMesh.geometry; it.wallMesh.geometry=buildWallRibbonGeometry(it.pathPoints, w); oldV.dispose(); const oldP=it.pickWallMesh.geometry; it.pickWallMesh.geometry=buildWallRibbonGeometry(it.pathPoints, w*PICK_BAND_SCALE); oldP.dispose(); } }); ui.wallOpacity.addEventListener('input', ()=>{ const op=parseFloat(ui.wallOpacity.value); for(const it of items){ it.wallMesh.material.opacity=op; it.wallMesh.material.transparent = op<1; } }); /* ==== STL export ==== */ ui.exportStl.addEventListener('click', ()=>{ const exporter=new STLExporter(); const group=new THREE.Group(); for(const it of items){ if(it.pipeMesh.visible) group.add(it.pipeMesh.clone()); if(it.wallMesh.visible) group.add(it.wallMesh.clone()); } const stl=exporter.parse(group); const blob=new Blob([stl],{type:'model/stl'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='isobars.stl'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 1000); }); /* 初期可視 */ basis.visible=true; gridXY.visible=true; gridZX.visible=true; </script> </body> </html>
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>3D天気図ビューアープラス</title>
+
+<!-- three.js & addons via importmap -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/"
+  }
+}
+</script>
+
+<style>
+  :root { --bg:#bfbfbf; --panel:#f8fafc; --muted:#6b7280; --border:#c8ced6; }
+  html,body{height:100%;margin:0;background:var(--bg);color:#0f172a;font-family:system-ui,-apple-system,Segoe UI,Roboto,"Hiragino Kaku Gothic ProN",Meiryo,sans-serif}
+  #app{display:grid;grid-template-columns:1fr 420px;grid-template-rows:56px 1fr;height:100%}
+  #app[data-panel="closed"]{grid-template-columns:1fr 0}
+  header{grid-column:1/-1;display:flex;align-items:center;gap:.6rem;padding:.5rem .9rem;border-bottom:1px solid var(--border);background:#f3f5f7}
+  header h1{font-size:15px;margin:0}
+  header .sp{flex:1}
+  header a{font-size:13px;color:#0b57d0;text-decoration:none}
+  header a:hover{text-decoration:underline}
+  header button,header label,header select{background:#fff;border:1px solid var(--border);color:#0f172a;padding:.45rem .7rem;border-radius:.5rem;cursor:pointer;font-size:13px}
+  header input[type=file]{display:none}
+  #viewer{position:relative;background:#fff}
+  #c{width:100%;height:100%}
+  #overlay{position:absolute;left:12px;bottom:12px;padding:.45rem .6rem;background:#ffffffcc;border:1px solid var(--border);border-radius:.6rem;font-size:12px;color:#334155}
+  #dragHud{position:absolute;pointer-events:none;transform:translate(-50%,-130%);padding:.25rem .45rem;font-size:12px;border-radius:.4rem;background:#0009;color:#fff;border:1px solid #0003;display:none;white-space:nowrap}
+  #sidebar{background:var(--panel);border-left:1px solid var(--border);overflow:auto;padding:.8rem}
+  #app[data-panel="closed"] #sidebar{display:none}
+  .section{margin-bottom:1rem}
+  .section h2{font-size:13px;margin:.3rem 0}
+  .row{display:grid;grid-template-columns:1fr auto;gap:.6rem;align-items:center;margin:.45rem 0}
+  .row label{font-size:12px;color:var(--muted)}
+  #list{display:grid;gap:.6rem}
+  .card{border:1px solid var(--border);background:#fff;border-radius:.6rem;padding:.6rem}
+  .card .t{display:flex;gap:.5rem;align-items:center;margin-bottom:.3rem}
+  .chip{display:inline-flex;align-items:center;gap:.4rem;border:1px solid var(--border);background:#f3f5f7;padding:.2rem .5rem;border-radius:999px;font-size:12px}
+  .small{font-size:12px}
+  .muted{color:#6b7280;font-size:12px;margin-left:.4rem}
+  canvas.grabbing{cursor:grabbing}
+  canvas.hovering{cursor:ns-resize}
+</style>
+</head>
+<body>
+<div id="app" data-panel="open">
+  <header>
+    <h1>3D天気図ビューアープラス</h1>
+
+    <a href="https://www.data.jma.go.jp/yoho/wxchart/quickmonthly.html" target="_blank" rel="noopener noreferrer">
+      気象庁による過去の実況天気図
+    </a>
+
+    <span class="sp"></span>
+
+    <!-- 投影法 -->
+    <select id="projection">
+      <option value="persp" selected>透視図法</option>
+      <option value="ortho">正射影図法</option>
+    </select>
+
+    <!-- ビュー -->
+    <select id="viewSelect">
+      <option value="all">斜め視点</option>
+      <option value="top">真上（XY）</option>
+      <option value="front">正面（ZX）</option>
+      <option value="side">側面（ZY）</option>
+    </select>
+
+    <!-- ファイル -->
+    <label for="file">SVG/SVGZを開く</label><input id="file" type="file" accept=".svg,.svgz,image/svg+xml,application/gzip">
+
+    <!-- STL -->
+    <button id="exportStl">STLを書き出し</button>
+
+    <!-- パネル -->
+    <button id="panelToggle">パネル</button>
+  </header>
+
+  <div id="viewer">
+    <canvas id="c"></canvas>
+    <div id="overlay">ドラッグ:回転 / 右ドラッグ:平行移動 / ホイール:ズーム / 線上ドラッグ:高さ変更（Shift=微 / Alt=粗）</div>
+    <div id="dragHud"></div>
+  </div>
+
+  <aside id="sidebar">
+    <div class="section">
+      <h2>全体設定</h2>
+      <div class="row"><label>背景色</label><input id="bgColor" type="color" value="#bfbfbf"></div>
+      <div class="row"><label>基準（軸＆キューブ）表示</label><input id="basisVisible" type="checkbox" checked></div>
+      <div class="row"><label>グリッド表示（XY/ZX）</label><input id="gridVisible" type="checkbox" checked></div>
+      <div class="row"><label>高さ倍率（Z）</label><input id="heightScale" type="range" min="0.1" max="20" step="0.1" value="5"></div>
+      <div class="row"><label>ドラッグ感度（px→高さ）</label><input id="dragSensitivity" type="range" min="0.05" max="2.0" step="0.05" value="0.3"></div>
+      <div class="row"><label>サンプリング密度（新規読込時）</label><input id="sample" type="range" min="32" max="1000" step="1" value="240"></div>
+    </div>
+
+    <div class="section">
+      <h2>天気図画像（下敷き）</h2>
+      <div class="row"><label>表示</label><input id="imgVisible" type="checkbox" checked></div>
+      <div class="row"><label>不透明度</label><input id="imgOpacity" type="range" min="0" max="1" step="0.01" value="0.85"></div>
+      <div class="row"><label>高さ（Zオフセット）</label><input id="imgHeight" type="range" min="-200" max="200" step="0.1" value="-0.1"></div>
+    </div>
+
+    <div class="section">
+      <h2>自動高さ（ラベル順・色も連動）</h2>
+      <div class="row"><label>有効</label><input id="autoMode" type="checkbox" checked></div>
+      <div class="row"><label>間隔倍率</label><input id="gapFactor" type="range" min="0.2" max="3" step="0.05" value="1"></div>
+      <div class="row"><label>平坦 ←→ 初期間隔</label><input id="autoBlend" type="range" min="0" max="1" step="0.01" value="1"></div>
+      <div class="row"><span class="muted" id="labelInfo">ラベル未解析</span><span></span></div>
+    </div>
+
+    <div class="section">
+      <h2>表示モード</h2>
+      <div class="row"><label>パイプ（Tube）</label><input id="modePipe" type="checkbox" checked></div>
+      <div class="row"><label>壁（Wall：帯押し出し）</label><input id="modeWall" type="checkbox"></div>
+      <!-- ★初期直径を太めに（6.0） -->
+      <div class="row"><label>パイプ直径</label><input id="pipeDia" type="range" min="0.2" max="12" step="0.1" value="6.0"></div>
+      <div class="row"><label>壁の厚さ（帯幅）</label><input id="wallThick" type="range" min="0.2" max="16" step="0.1" value="2.5"></div>
+      <div class="row"><label>壁の不透明度</label><input id="wallOpacity" type="range" min="0" max="1" step="0.01" value="0.9"></div>
+      <div class="row"><span class="muted">※パイプ/壁は同時表示可。ドラッグは表示中の形状に有効。</span><span></span></div>
+    </div>
+
+    <div class="section">
+      <h2>等圧線リスト</h2>
+      <div id="list"></div>
+    </div>
+  </aside>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { SVGLoader } from 'three/addons/loaders/SVGLoader.js';
+import { STLExporter } from 'three/addons/exporters/STLExporter.js';
+import * as pako from 'https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.esm.mjs';
+import { FontLoader } from 'three/addons/loaders/FontLoader.js';
+import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+
+/* ========= タッチ最適化：当たり判定の太さ係数 ========= */
+const PICK_TUBE_SCALE = 2.8;   // パイプの当たり判定：見た目半径×これ
+const PICK_BAND_SCALE = 1.8;   // 壁（帯）の当たり判定：帯幅×これ（より広く）
+
+/* ==== DOM refs ==== */
+const ui = {
+  app: document.getElementById('app'),
+  canvas: document.getElementById('c'),
+  dragHud: document.getElementById('dragHud'),
+  projection: document.getElementById('projection'),
+  viewSelect: document.getElementById('viewSelect'),
+  file: document.getElementById('file'),
+  exportStl: document.getElementById('exportStl'),
+  panelToggle: document.getElementById('panelToggle'),
+  bgColor: document.getElementById('bgColor'),
+  basisVisible: document.getElementById('basisVisible'),
+  gridVisible: document.getElementById('gridVisible'),
+  heightScale: document.getElementById('heightScale'),
+  dragSensitivity: document.getElementById('dragSensitivity'),
+  sample: document.getElementById('sample'),
+  imgVisible: document.getElementById('imgVisible'),
+  imgOpacity: document.getElementById('imgOpacity'),
+  imgHeight: document.getElementById('imgHeight'),
+  autoMode: document.getElementById('autoMode'),
+  gapFactor: document.getElementById('gapFactor'),
+  autoBlend: document.getElementById('autoBlend'),
+  labelInfo: document.getElementById('labelInfo'),
+  modePipe: document.getElementById('modePipe'),
+  modeWall: document.getElementById('modeWall'),
+  pipeDia: document.getElementById('pipeDia'),
+  wallThick: document.getElementById('wallThick'),
+  wallOpacity: document.getElementById('wallOpacity'),
+  list: document.getElementById('list')
+};
+
+/* ==== renderer / scene ==== */
+const renderer = new THREE.WebGLRenderer({canvas: ui.canvas, antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(ui.bgColor.value);
+
+/* ==== cameras & controls ==== */
+let controls, camera;
+const perspCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 50000);
+perspCamera.up.set(0,0,1);
+perspCamera.position.set(450,300,200);
+
+const orthoCamera = new THREE.OrthographicCamera(-500,500,500,-500,-50000,50000);
+orthoCamera.up.set(0,0,1);
+orthoCamera.position.copy(perspCamera.position);
+
+function makeControls(cam){ if(controls) controls.dispose(); controls = new OrbitControls(cam, renderer.domElement); controls.enableDamping=true; controls.screenSpacePanning=false; }
+function setOrthoFrustum(){
+  const v=document.getElementById('viewer'); const aspect=v.clientWidth/v.clientHeight;
+  const box=new THREE.Box3().setFromObject(chartGroup);
+  const s=new THREE.Vector3(); box.getSize(s);
+  const maxDim=Math.max(s.x,s.y,s.z,100);
+  const halfH=maxDim*0.7, halfW=halfH*aspect;
+  orthoCamera.left=-halfW; orthoCamera.right=halfW; orthoCamera.top=halfH; orthoCamera.bottom=-halfH;
+  orthoCamera.near=-maxDim*10; orthoCamera.far=maxDim*10; orthoCamera.updateProjectionMatrix();
+}
+function usePerspective(){ perspCamera.position.copy(camera.position); camera=perspCamera; makeControls(camera); controls.target.copy(_target); controls.update(); }
+function useOrthographic(){ orthoCamera.position.copy(camera.position); setOrthoFrustum(); camera=orthoCamera; makeControls(camera); controls.target.copy(_target); controls.update(); }
+let _target = new THREE.Vector3();
+camera = perspCamera; makeControls(camera);
+
+/* ==== lights / grid / basis ==== */
+scene.add(new THREE.AmbientLight(0xffffff,0.55));
+const dl=new THREE.DirectionalLight(0xffffff,0.9); dl.position.set(400,300,500); scene.add(dl);
+const gridXY=new THREE.GridHelper(1000,100,0xffffff,0xffffff); gridXY.rotation.x=Math.PI/2; scene.add(gridXY);
+const gridZX=new THREE.GridHelper(1000,100,0xffffff,0xffffff); gridZX.material.opacity=.5; gridZX.material.transparent=true; scene.add(gridZX);
+
+const basis=new THREE.Group();
+basis.add(new THREE.ArrowHelper(new THREE.Vector3(1,0,0),new THREE.Vector3(),300,0xff0000,50,20));
+basis.add(new THREE.ArrowHelper(new THREE.Vector3(0,1,0),new THREE.Vector3(),300,0x00ff00,50,20));
+basis.add(new THREE.ArrowHelper(new THREE.Vector3(0,0,1),new THREE.Vector3(),300,0x0000ff,50,20));
+const fontLoader=new FontLoader();
+fontLoader.load('https://threejs.org/examples/fonts/helvetiker_regular.typeface.json',(font)=>{
+  const mk=(ch,col,pos)=>{ const g=new TextGeometry(ch,{font,size:40,height:5}); g.computeBoundingBox(); const m=new THREE.MeshBasicMaterial({color:col}); const mesh=new THREE.Mesh(g,m); const w=g.boundingBox.max.x-g.boundingBox.min.x; mesh.position.set(pos.x-w/2,pos.y,pos.z); basis.add(mesh); };
+  mk('X',0xff0000,{x:320,y:-20,z:0}); mk('Y',0x00ff00,{x:0,y:320,z:0}); mk('Z',0x0000ff,{x:0,y:-20,z:320});
+});
+const cube=new THREE.Mesh(new THREE.BoxGeometry(60,60,60),[
+  new THREE.MeshStandardMaterial({color:0xff0000,roughness:.4,metalness:.1}),
+  new THREE.MeshStandardMaterial({color:0xff0000,roughness:.4,metalness:.1}),
+  new THREE.MeshStandardMaterial({color:0x00ff00,roughness:.4,metalness:.1}),
+  new THREE.MeshStandardMaterial({color:0x00ff00,roughness:.4,metalness:.1}),
+  new THREE.MeshStandardMaterial({color:0x0000ff,roughness:.4,metalness:.1}),
+  new THREE.MeshStandardMaterial({color:0x0000ff,roughness:.4,metalness:.1}),
+]); cube.position.set(0,0,30); basis.add(cube); scene.add(basis);
+
+/* ==== containers ==== */
+const chartGroup=new THREE.Group(); scene.add(chartGroup);
+const rootLines=new THREE.Group(); chartGroup.add(rootLines);
+/* items 構造：
+  {
+    pipeMesh, wallMesh,                  // 可視メッシュ
+    pickPipeMesh, pickWallMesh,          // 当たり判定メッシュ（透明で太い）
+    activeMesh, activePick,              // 現在の表示/ピック対象
+    pathPoints, height, ui, centroid, pressure, area, autoTarget
+  }
+*/
+let items=[];
+let weatherPlane=null, lastSvgDims=null, lastRawSvgText="";
+
+/* ==== render loop / resize ==== */
+function resize(){ const v=document.getElementById('viewer'); renderer.setSize(v.clientWidth,v.clientHeight,false); if(camera.isPerspectiveCamera){ camera.aspect=v.clientWidth/v.clientHeight; camera.updateProjectionMatrix(); } else setOrthoFrustum(); }
+addEventListener('resize',resize); resize();
+(function anim(){ requestAnimationFrame(anim); controls.update(); renderer.render(scene,camera); })();
+
+/* ==== views ==== */
+function fitView(target=chartGroup){
+  const b=new THREE.Box3().setFromObject(target); const sz=new THREE.Vector3(), cen=new THREE.Vector3(); b.getSize(sz); b.getCenter(cen); if(!(isFinite(sz.x)&&isFinite(sz.y))) return;
+  _target.copy(cen);
+  if(camera.isPerspectiveCamera){
+    const maxDim=Math.max(sz.x,sz.y,sz.z);
+    const dist=maxDim*1.2/Math.tan(THREE.MathUtils.degToRad(perspCamera.fov*0.5));
+    const dir=new THREE.Vector3(.75,.55,.35).normalize();
+    camera.position.copy(cen.clone().add(dir.multiplyScalar(dist)));
+    camera.near=Math.max(.1,dist/1000); camera.far=dist*1000; camera.updateProjectionMatrix();
+  }else{
+    setOrthoFrustum();
+    camera.position.copy(new THREE.Vector3(.75,.55,.35).normalize().multiplyScalar(Math.max(sz.x,sz.y,sz.z)*2).add(cen));
+  }
+  controls.target.copy(cen); controls.update();
+}
+function viewTop(){ const b=new THREE.Box3().setFromObject(chartGroup),c=new THREE.Vector3(),s=new THREE.Vector3(); b.getCenter(c); b.getSize(s); const dist=Math.max(s.x,s.y,s.z)*2+1; camera.position.set(c.x,c.y,c.z+dist); _target.copy(c); controls.target.copy(c); controls.update(); if(!camera.isPerspectiveCamera) setOrthoFrustum(); }
+function viewFront(){ const b=new THREE.Box3().setFromObject(chartGroup),c=new THREE.Vector3(),s=new THREE.Vector3(); b.getCenter(c); b.getSize(s); const dist=Math.max(s.x,s.y,s.z)*2+1; camera.position.set(c.x,c.y-dist,c.z); _target.copy(c); controls.target.copy(c); controls.update(); if(!camera.isPerspectiveCamera) setOrthoFrustum(); }
+function viewSide(){ const b=new THREE.Box3().setFromObject(chartGroup),c=new THREE.Vector3(),s=new THREE.Vector3(); b.getCenter(c); b.getSize(s); const dist=Math.max(s.x,s.y,s.z)*2+1; camera.position.set(c.x+dist,c.y,c.z); _target.copy(c); controls.target.copy(c); controls.update(); if(!camera.isPerspectiveCamera) setOrthoFrustum(); }
+
+/* ==== helpers (color, max) ==== */
+function colorFromHeight(h,maxH){ if(maxH<=0 || h<=0) return new THREE.Color(0xff0000); const t=Math.min(Math.max(h/maxH,0),1); const c=new THREE.Color(); c.setHSL((2/3)*t,1,0.5); return c; }
+function currentMaxHeightStrict(){ if(!items.length) return 0; let m=0; for(const it of items) if(it.height>m) m=it.height; return m; }
+
+/* ==== geometry builders ==== */
+function buildTubeGeometry(points, radius){
+  const curve=new THREE.CatmullRomCurve3(points,false,'centripetal',0.5);
+  const seg=Math.max(16, Math.min(2048, Math.floor(points.length*1.5)));
+  return new THREE.TubeGeometry(curve, seg, radius, 12, false);
+}
+
+/* ラウンドオフセット帯（Z=0..1 押し出し） */
+function buildWallRibbonGeometry(points, width, miterEps=0.25){
+  const n = points.length; if(n < 2) return new THREE.BoxGeometry(0,0,0);
+  const half = width * 0.5;
+  const dir = new Array(n);
+  for(let i=0;i<n;i++){
+    const a = points[Math.max(0,i-1)], b = points[Math.min(n-1,i+1)];
+    const vx = b.x - a.x, vy = b.y - a.y;
+    const l = Math.hypot(vx,vy) || 1;
+    dir[i] = {x:vx/l, y:vy/l};
+  }
+  const left = new Array(n), right = new Array(n);
+  for(let i=0;i<n;i++){
+    const t0 = dir[Math.max(0,i-1)], t1 = dir[Math.min(n-1,i+1)];
+    const n0 = {x:-t0.y, y:t0.x}, n1 = {x:-t1.y, y:t1.x};
+    let ax = n0.x + n1.x, ay = n0.y + n1.y;
+    const al = Math.hypot(ax,ay);
+    if(al < 1e-6){ ax = n0.x; ay = n0.y; } else { ax/=al; ay/=al; }
+    const dot = ax*n0.x + ay*n0.y;
+    const scale = half / Math.max(Math.abs(dot), miterEps);
+    const p = points[i];
+    left[i]  = new THREE.Vector3(p.x + ax*scale, p.y + ay*scale, 0);
+    right[i] = new THREE.Vector3(p.x - ax*scale, p.y - ay*scale, 0);
+  }
+  const positions = new Float32Array(n*4*3);
+  const uvs       = new Float32Array(n*4*2);
+  const id = (i,k)=> i*4+k;
+  for(let i=0;i<n;i++){
+    const L=left[i], R=right[i];
+    positions.set([L.x,L.y,0], (id(i,0))*3);
+    positions.set([R.x,R.y,0], (id(i,1))*3);
+    positions.set([L.x,L.y,1], (id(i,2))*3);
+    positions.set([R.x,R.y,1], (id(i,3))*3);
+    const u = i/(n-1);
+    uvs.set([u,0], (id(i,0))*2);
+    uvs.set([u,1], (id(i,1))*2);
+    uvs.set([u,0], (id(i,2))*2);
+    uvs.set([u,1], (id(i,3))*2);
+  }
+  const indices=[];
+  for(let i=0;i<n-1;i++){
+    const aLB=id(i,0), aRB=id(i,1), aLT=id(i,2), aRT=id(i,3);
+    const bLB=id(i+1,0), bRB=id(i+1,1), bLT=id(i+1,2), bRT=id(i+1,3);
+    indices.push(aLB,aLT,bLT,  aLB,bLT,bLB); // 左
+    indices.push(aRB,bRB,bRT,  aRB,bRT,aRT); // 右
+    indices.push(aLT,aRT,bRT,  aLT,bRT,bLT); // 上
+    indices.push(aLB,bLB,bRB,  aLB,bRB,aRB); // 下
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(positions,3));
+  g.setAttribute('uv',       new THREE.BufferAttribute(uvs,2));
+  g.setIndex(indices);
+  g.computeVertexNormals();
+  return g;
+}
+
+/* ==== SVG → items ==== */
+function centroidXY(pts){ let sx=0,sy=0; for(const p of pts){sx+=p.x;sy+=p.y;} const n=pts.length||1; return {x:sx/n,y:sy/n}; }
+function polygonArea(pts){ let a=0; for(let i=0;i<pts.length;i++){ const p=pts[i], q=pts[(i+1)%pts.length]; a += p.x*q.y - q.x*p.y; } return Math.abs(a)/2; }
+
+async function loadSVGFromString(svgText){
+  rootLines.clear(); items=[]; ui.list.innerHTML='';
+  const loader=new SVGLoader(); let data;
+  try{ data=loader.parse(svgText); }catch(e){ console.error('SVG parse 失敗',e); return; }
+
+  const linesGroup=new THREE.Group();
+  const sampleN=parseInt(ui.sample.value,10);
+  const radius=parseFloat(ui.pipeDia.value)/2;
+  const bandW =parseFloat(ui.wallThick.value);
+  const wallOp=parseFloat(ui.wallOpacity.value);
+
+  for(const p of data.paths){
+    const style=p.userData?.style||{}; const stroke=(style.stroke && style.stroke!=='none')?style.stroke:"#9aa4b2";
+    for(const sub of p.subPaths){
+      const pts2=sub.getPoints(Math.max(2,sampleN)); if(pts2.length<2) continue;
+      const pts3=pts2.map(pt=>new THREE.Vector3(+pt.x, -pt.y, 0)); // Y反転
+
+      // 可視メッシュ
+      const pipeGeom = buildTubeGeometry(pts3, radius);
+      const pipeMat  = new THREE.MeshStandardMaterial({color:new THREE.Color(stroke), roughness:.6, metalness:.06, side:THREE.DoubleSide});
+      const pipeMesh = new THREE.Mesh(pipeGeom, pipeMat);
+
+      const wallGeom = buildWallRibbonGeometry(pts3, bandW);
+      const wallMat  = new THREE.MeshStandardMaterial({color:new THREE.Color(stroke), roughness:.7, metalness:.05, side:THREE.DoubleSide, transparent: wallOp<1, opacity: wallOp});
+      const wallMesh = new THREE.Mesh(wallGeom, wallMat);
+
+      // 当たり判定メッシュ（透明で太め）
+      const pickPipeGeom = buildTubeGeometry(pts3, radius * PICK_TUBE_SCALE);
+      const pickPipeMat  = new THREE.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0.001, depthWrite:false});
+      const pickPipeMesh = new THREE.Mesh(pickPipeGeom, pickPipeMat); pickPipeMesh.renderOrder = -1000;
+
+      const pickWallGeom = buildWallRibbonGeometry(pts3, bandW * PICK_BAND_SCALE);
+      const pickWallMat  = new THREE.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0.001, depthWrite:false});
+      const pickWallMesh = new THREE.Mesh(pickWallGeom, pickWallMat); pickWallMesh.renderOrder = -1000;
+
+      const cen=centroidXY(pts2), area=polygonArea(pts2);
+      items.push({
+        pipeMesh, wallMesh,
+        pickPipeMesh, pickWallMesh,
+        activeMesh:null, activePick:null,
+        pathPoints:pts3, height:0, ui:{}, centroid:cen, pressure:undefined, area, autoTarget:0
+      });
+
+      linesGroup.add(pipeMesh, wallMesh, pickPipeMesh, pickWallMesh);
+    }
+  }
+
+  // 中心化＆スケール
+  const box=new THREE.Box3().setFromObject(linesGroup); const cen3=new THREE.Vector3(), sz=new THREE.Vector3();
+  box.getCenter(cen3); box.getSize(sz);
+  linesGroup.position.x=-cen3.x; linesGroup.position.y=-cen3.y;
+  const scale=600/Math.max(sz.x,sz.y); chartGroup.scale.setScalar(isFinite(scale)&&scale>0?scale:1);
+
+  rootLines.add(linesGroup);
+  await assignPressuresFromLabelsOrAreas();
+
+  applyModeVisibility();
+  if (ui.autoMode.checked) applyAutoHeights();
+  buildList(true);
+  updateHeightsAndColors();
+  fitView(chartGroup);
+}
+
+/* ==== labels or area ==== */
+function parseTranslate(tf){ let tx=0,ty=0; if(!tf) return {tx,ty}; const m=tf.match(/matrix\(([^)]+)\)/); if(m){const a=m[1].split(/[ ,]+/).map(Number); if(a.length===6&&a.every(n=>isFinite(n))){tx+=a[4];ty+=a[5];}} const t=tf.match(/translate\(([^)]+)\)/); if(t){const a=t[1].split(/[ ,]+/).map(Number); if(a.length>=1) tx+=a[0]||0; if(a.length>=2) ty+=a[1]||0;} return {tx,ty}; }
+function estimateXY(el){ let x=parseFloat(el.getAttribute("x")||"0"), y=parseFloat(el.getAttribute("y")||"0"), cur=el; while(cur&&cur.nodeType===1){ const tf=cur.getAttribute&&cur.getAttribute("transform"); const {tx,ty}=parseTranslate(tf||""); x+=tx; y+=ty; cur=cur.parentNode; } return {x,y}; }
+function readPressureLabels(svgText){
+  const doc=new DOMParser().parseFromString(svgText,"image/svg+xml"); const svg=doc.querySelector("svg"); if(!svg) return [];
+  const labels=[]; for(const t of doc.querySelectorAll("text")){
+    const raw=(t.textContent||"").trim(); const m=raw.match(/(-?\d{3,4})/); if(!m) continue;
+    const val=parseInt(m[1],10); if(!isFinite(val)||val<800||val>1100) continue;
+    const {x,y}=estimateXY(t); labels.push({x,y,value:val});
+  } return labels;
+}
+async function assignPressuresFromLabelsOrAreas(){
+  const labs=readPressureLabels(lastRawSvgText);
+  if(labs.length){
+    ui.labelInfo.textContent=`検出ラベル: ${labs.length} 個`;
+    for(const it of items){
+      const {x,y}=it.centroid; let best=null,bd=Infinity;
+      for(const lb of labs){ const d=(lb.x-x)**2+(lb.y-y)**2; if(d<bd){bd=d; best=lb;} }
+      it.pressure=best?.value;
+    }
+  }else{
+    ui.labelInfo.textContent='ラベルなし：面積ベースで自動配置';
+    const arr=items.slice().sort((a,b)=>a.area-b.area);
+    arr.forEach((it,idx)=>{ it.pressure=idx; });
+  }
+}
+
+/* ==== auto heights ==== */
+function applyAutoHeights(){
+  const gf=parseFloat(ui.gapFactor.value);
+  const blend=parseFloat(ui.autoBlend.value);
+  const maxH=100*gf;
+  const withP=items.filter(it=>isFinite(it.pressure)).sort((a,b)=>a.pressure-b.pressure);
+  const n=withP.length;
+  if(!n){ items.forEach(it=>it.height=0); updateHeightsAndColors(); return; }
+  withP.forEach((it,idx)=>{ const t=(n===1)?0:(idx/(n-1)); it.autoTarget=t*maxH; });
+  for(const it of items){ it.height=(it.autoTarget||0)*blend; }
+  updateHeightsAndColors();
+}
+
+/* ==== height & color update ==== */
+function updateHeightsAndColors(){
+  const s=parseFloat(ui.heightScale.value);
+  const maxH=currentMaxHeightStrict(); // その時点の最高で正規化
+
+  for(const it of items){
+    const z = it.height * s;
+
+    // 可視メッシュのZ反映
+    it.pipeMesh.position.z = z;
+    it.wallMesh.scale.z    = Math.max(z, 0.0001);
+    it.wallMesh.position.z = 0;
+
+    // 当たり判定メッシュも追従
+    it.pickPipeMesh.position.z = z;
+    it.pickWallMesh.scale.z    = Math.max(z, 0.0001);
+    it.pickWallMesh.position.z = 0;
+
+    // 色
+    const col = colorFromHeight(it.height, maxH);
+    it.pipeMesh.material.color.copy(col);
+    it.wallMesh.material.color.copy(col);
+    if(it.ui?.color) it.ui.color.value = `#${col.getHexString()}`;
+  }
+}
+
+/* ==== mode visibility ==== */
+function applyModeVisibility(){
+  const showPipe=ui.modePipe.checked;
+  const showWall=ui.modeWall.checked;
+  for(const it of items){
+    it.pipeMesh.visible = showPipe;
+    it.wallMesh.visible = showWall;
+    it.pickPipeMesh.visible = showPipe;
+    it.pickWallMesh.visible = showWall;
+
+    // ドラッグ対象は「表示中」を優先（壁がONなら壁、でなければパイプ）
+    if (showWall){
+      it.activeMesh = it.wallMesh;
+      it.activePick = it.pickWallMesh;
+    } else {
+      it.activeMesh = it.pipeMesh;
+      it.activePick = it.pickPipeMesh;
+    }
+  }
+}
+
+/* ==== list & interactions ==== */
+function buildList(orderByPressure=false){
+  ui.list.innerHTML='';
+  let arr=items.slice();
+  if(orderByPressure){
+    arr.sort((a,b)=>{
+      const ap=isFinite(a.pressure)?a.pressure:Infinity;
+      const bp=isFinite(b.pressure)?b.pressure:Infinity;
+      return ap-bp;
+    });
+  }
+  let i=0;
+  for(const it of arr){
+    const card=document.createElement('div'); card.className='card';
+    const t=document.createElement('div'); t.className='t';
+    const c=document.createElement('span'); c.className='chip'; c.textContent=`L${(++i).toString().padStart(3,'0')}`;
+    const color=document.createElement('input'); color.type='color'; color.disabled=true; color.value='#9aa4b2';
+    const tag=document.createElement('span'); tag.className='small muted'; tag.textContent=isFinite(it.pressure)?`P=${it.pressure}`:`P=?`;
+    const hide=document.createElement('button'); hide.textContent='非表示'; hide.className='small';
+    hide.onclick=()=>{ 
+      const v=!(it.pipeMesh.visible||it.wallMesh.visible); 
+      it.pipeMesh.visible=v; it.wallMesh.visible=v; 
+      it.pickPipeMesh.visible=v; it.pickWallMesh.visible=v;
+      hide.textContent=v?'非表示':'表示';
+    };
+    t.append(c,color,tag,hide); card.appendChild(t);
+
+    const row1=document.createElement('div'); row1.className='row';
+    const lab=document.createElement('label'); lab.textContent='高さ（Z）';
+    const slider=document.createElement('input'); slider.type='range'; slider.min=-2000; slider.max=2000; slider.step=0.1; slider.value=it.height;
+    slider.oninput=()=>{ it.height=parseFloat(slider.value); if(it.ui?.num) it.ui.num.value=it.height.toFixed(2); updateHeightsAndColors(); };
+    row1.append(lab,slider); card.appendChild(row1);
+
+    const row2=document.createElement('div'); row2.className='row';
+    const hint=document.createElement('span'); hint.className='small'; hint.textContent='（手動でも調整可）';
+    const num=document.createElement('input'); num.type='number'; num.className='small'; num.step=0.1; num.style.width='100px'; num.value=it.height.toFixed(2);
+    num.onchange=()=>{ const v=parseFloat(num.value)||0; it.height=v; slider.value=v; updateHeightsAndColors(); };
+    row2.append(hint,num); card.appendChild(row2);
+
+    it.ui={slider,num,color};
+    ui.list.appendChild(card);
+  }
+}
+
+/* ==== Pointer Events でのドラッグ ==== */
+const raycaster=new THREE.Raycaster(); const pointer=new THREE.Vector2();
+let draggingItem=null; let lastClientY=0;
+
+function pickFromClientXY(clientX, clientY){
+  const rect=ui.canvas.getBoundingClientRect();
+  pointer.set((clientX-rect.left)/rect.width*2-1, -(clientY-rect.top)/rect.height*2+1);
+  raycaster.setFromCamera(pointer,camera);
+
+  // 表示状態の activePick を対象に
+  const targets = items.map(i=>i.activePick).filter(m=>m && m.visible);
+  const hits = raycaster.intersectObjects(targets, false);
+  if(!hits[0]) return null;
+  const obj = hits[0].object;
+  return items.find(it => it.activePick===obj);
+}
+function updateHudByClientXY(clientX, clientY, h){
+  const rect=ui.canvas.getBoundingClientRect();
+  ui.dragHud.style.left = (clientX-rect.left)+'px';
+  ui.dragHud.style.top  = (clientY-rect.top)+'px';
+  const maxH=currentMaxHeightStrict();
+  const col=colorFromHeight(h,maxH);
+  const r=Math.round(col.r*255), g=Math.round(col.g*255), b=Math.round(col.b*255);
+  ui.dragHud.style.background=`rgba(${r},${g},${b},.9)`;
+  ui.dragHud.textContent=`Z = ${h.toFixed(2)}`;
+}
+
+ui.canvas.addEventListener('pointerdown',(e)=>{
+  if(e.button!==0) return;
+  const hit = pickFromClientXY(e.clientX, e.clientY);
+  if(hit){
+    draggingItem = hit;
+    lastClientY = e.clientY;
+    controls.enabled = false;
+    ui.canvas.classList.add('grabbing');
+    ui.dragHud.style.display='block';
+    updateHudByClientXY(e.clientX, e.clientY, draggingItem.height);
+    ui.canvas.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }
+});
+ui.canvas.addEventListener('pointermove',(e)=>{
+  if(draggingItem){
+    const dy = e.clientY - lastClientY; lastClientY = e.clientY;
+    let sens=parseFloat(ui.dragSensitivity.value);
+    if(e.shiftKey) sens*=.2; if(e.altKey) sens*=3.0;
+    draggingItem.height += -dy * sens;
+
+    // Z反映（可視＋当たり判定）
+    const s = parseFloat(ui.heightScale.value);
+    const z = draggingItem.height * s;
+    draggingItem.pipeMesh.position.z = z;
+    draggingItem.pickPipeMesh.position.z = z;
+    draggingItem.wallMesh.scale.z = Math.max(z, 0.0001);
+    draggingItem.pickWallMesh.scale.z = Math.max(z, 0.0001);
+    draggingItem.wallMesh.position.z = 0;
+    draggingItem.pickWallMesh.position.z = 0;
+
+    if(draggingItem.ui?.slider) draggingItem.ui.slider.value=draggingItem.height;
+    if(draggingItem.ui?.num)    draggingItem.ui.num.value=draggingItem.height.toFixed(2);
+
+    updateHeightsAndColors(); // 最高値が動きうるため毎回再着色
+    updateHudByClientXY(e.clientX, e.clientY, draggingItem.height);
+    e.preventDefault();
+    return;
+  }
+  // ホバーカーソル
+  const over = pickFromClientXY(e.clientX, e.clientY);
+  ui.canvas.classList.toggle('hovering', !!over);
+});
+function endDrag(e){
+  if(draggingItem){
+    updateHeightsAndColors();
+    draggingItem=null;
+    controls.enabled=true;
+    ui.canvas.classList.remove('grabbing');
+    ui.dragHud.style.display='none';
+    if(e) ui.canvas.releasePointerCapture(e.pointerId);
+  }
+}
+ui.canvas.addEventListener('pointerup', endDrag);
+ui.canvas.addEventListener('pointercancel', endDrag);
+ui.canvas.addEventListener('pointerleave', (e)=>{ if(draggingItem) endDrag(e); });
+
+/* ==== background image ==== */
+async function buildOrUpdateWeatherPlane(rawSvgText){
+  if(!lastSvgDims) return; const {w,h}=lastSvgDims;
+  const tex=await new THREE.TextureLoader().loadAsync('data:image/svg+xml;charset=utf-8,'+encodeURIComponent(rawSvgText));
+  tex.colorSpace=THREE.SRGBColorSpace; tex.anisotropy=renderer.capabilities.getMaxAnisotropy(); tex.flipY=false;
+  const mat=new THREE.MeshBasicMaterial({map:tex, transparent:true, opacity:parseFloat(ui.imgOpacity.value), side:THREE.DoubleSide});
+  const geom=new THREE.PlaneGeometry(w,h);
+  if(!weatherPlane){ weatherPlane=new THREE.Mesh(geom,mat); weatherPlane.renderOrder=-1; chartGroup.add(weatherPlane); }
+  else{ weatherPlane.geometry.dispose(); weatherPlane.material.map?.dispose(); weatherPlane.material.dispose(); weatherPlane.geometry=geom; weatherPlane.material=mat; }
+  weatherPlane.scale.y = -Math.abs(weatherPlane.scale.y);
+  applyImageUI();
+}
+function applyImageUI(){ if(!weatherPlane) return; weatherPlane.visible=ui.imgVisible.checked; weatherPlane.material.opacity=parseFloat(ui.imgOpacity.value); const s=parseFloat(ui.heightScale.value); weatherPlane.position.z=parseFloat(ui.imgHeight.value)*s; }
+['imgVisible','imgOpacity','imgHeight','heightScale'].forEach(id=>ui[id].addEventListener('input',applyImageUI));
+
+/* ==== file I/O ==== */
+function tryDecodeUtf8(u8){ try{ const txt=new TextDecoder("utf-8",{fatal:false}).decode(u8); if(txt.includes("<svg")||txt.includes("<?xml")) return txt; }catch{} return null; }
+async function readSvgOrSvgz(file){
+  const buf=await file.arrayBuffer(); const u8=new Uint8Array(buf);
+  const plain=tryDecodeUtf8(u8); if(plain) return plain;
+  const isGzip=u8.length>=2 && u8[0]===0x1f && u8[1]===0x8b;
+  if(isGzip || (file.name||"").toLowerCase().endsWith(".svgz")){
+    try{ const t=new TextDecoder("utf-8").decode(pako.ungzip(u8)); if(t.includes("<svg")) return t; }catch(e1){
+      try{ const t=new TextDecoder("utf-8").decode(pako.inflate(u8)); if(t.includes("<svg")) return t; }catch(e2){
+        try{ const t=new TextDecoder("utf-8").decode(pako.inflateRaw(u8)); if(t.includes("<svg")) return t; }catch(e3){}
+      }
+    }
+  }
+  const fb=new TextDecoder("utf-8",{fatal:false}).decode(u8);
+  if(fb && fb.includes("<svg")) return fb;
+  throw new Error("SVGZの解凍に失敗しました。");
+}
+function readSvgDims(svgEl){
+  const vb=svgEl.getAttribute("viewBox");
+  if(vb){ const a=vb.trim().split(/\s+|,/).map(Number); if(a.length===4&&a.every(n=>isFinite(n))) return {w:a[2],h:a[3]}; }
+  const w=parseFloat((svgEl.getAttribute("width")||"").replace(/[^\d.]+/g,""));
+  const h=parseFloat((svgEl.getAttribute("height")||"").replace(/[^\d.]+/g,""));
+  if(isFinite(w)&&isFinite(h)&&w>0&&h>0) return {w,h};
+  return {w:1000,h:1000};
+}
+function extractIsobarsOnly(svgText){
+  const doc=new DOMParser().parseFromString(svgText,"image/svg+xml");
+  const svg=doc.querySelector("svg"); if(!svg) return svgText; lastSvgDims=readSvgDims(svg);
+  const viewBox=svg.getAttribute("viewBox")||null, width=svg.getAttribute("width")||null, height=svg.getAttribute("height")||null;
+  const contours=svg.querySelectorAll('g#weatherChart g.contour');
+  const outDoc=document.implementation.createDocument("http://www.w3.org/2000/svg","svg",null);
+  const outSvg=outDoc.documentElement; outSvg.setAttribute("xmlns","http://www.w3.org/2000/svg");
+  if(viewBox) outSvg.setAttribute("viewBox",viewBox); if(width) outSvg.setAttribute("width",width); if(height) outSvg.setAttribute("height",height);
+  const DEFAULT_STROKE="#9aa4b2";
+  contours.forEach(cont=>{
+    cont.querySelectorAll("path, polyline, circle, rect, ellipse").forEach(el=>{
+      const dup=el.cloneNode(true);
+      dup.setAttribute("fill","none");
+      if(!dup.getAttribute("stroke")||dup.getAttribute("stroke")==="none") dup.setAttribute("stroke",DEFAULT_STROKE);
+      if(!dup.getAttribute("stroke-width")) dup.setAttribute("stroke-width","1");
+      outSvg.appendChild(dup);
+    });
+  });
+  if(!outSvg.firstElementChild) return svgText;
+  return new XMLSerializer().serializeToString(outSvg);
+}
+ui.file.addEventListener('change', async (e)=>{
+  const f=e.target.files?.[0]; if(!f) return;
+  try{
+    const raw=await readSvgOrSvgz(f); lastRawSvgText=raw;
+    const doc=new DOMParser().parseFromString(raw,"image/svg+xml"); const svg=doc.querySelector("svg"); if(svg) lastSvgDims=readSvgDims(svg);
+    await buildOrUpdateWeatherPlane(raw);
+    const only=extractIsobarsOnly(raw);
+    await loadSVGFromString(only);
+    fitView(chartGroup);
+  }catch(err){ console.error('読み込みエラー',err); }
+});
+
+/* ==== UI bindings ==== */
+ui.bgColor.addEventListener('input', e=>{ scene.background=new THREE.Color(e.target.value); });
+ui.basisVisible.addEventListener('change', e=>{ basis.visible=e.target.checked; });
+ui.gridVisible.addEventListener('change', e=>{ const v=e.target.checked; gridXY.visible=v; gridZX.visible=v; });
+ui.heightScale.addEventListener('input', ()=>{ updateHeightsAndColors(); applyImageUI(); });
+
+ui.viewSelect.addEventListener('change', e=>{ const v=e.target.value; if(v==='top') viewTop(); else if(v==='front') viewFront(); else if(v==='side') viewSide(); else fitView(chartGroup); });
+ui.projection.addEventListener('change', e=>{ (e.target.value==='ortho')?useOrthographic():usePerspective(); fitView(chartGroup); });
+ui.panelToggle.addEventListener('click', ()=>{ const open=ui.app.getAttribute('data-panel')!=='closed'; ui.app.setAttribute('data-panel', open?'closed':'open'); setTimeout(resize,0); });
+
+ui.autoMode.addEventListener('change', ()=>{ if(ui.autoMode.checked) applyAutoHeights(); else { for(const it of items){ it.height=0; if(it.ui?.slider) it.ui.slider.value=0; if(it.ui?.num) it.ui.num.value='0.00'; } updateHeightsAndColors(); }});
+ui.gapFactor.addEventListener('input', ()=>{ if(ui.autoMode.checked) applyAutoHeights(); });
+ui.autoBlend.addEventListener('input', ()=>{ if(ui.autoMode.checked) applyAutoHeights(); });
+
+function syncMode(){ applyModeVisibility(); updateHeightsAndColors(); }
+ui.modePipe.addEventListener('change', syncMode);
+ui.modeWall.addEventListener('change', syncMode);
+
+/* 直径/帯幅変更時：可視＋当たり判定を再生成 */
+ui.pipeDia.addEventListener('input', ()=>{
+  const r=parseFloat(ui.pipeDia.value)/2;
+  for(const it of items){
+    const oldV=it.pipeMesh.geometry; it.pipeMesh.geometry=buildTubeGeometry(it.pathPoints, r); oldV.dispose();
+    const oldP=it.pickPipeMesh.geometry; it.pickPipeMesh.geometry=buildTubeGeometry(it.pathPoints, r*PICK_TUBE_SCALE); oldP.dispose();
+  }
+  updateHeightsAndColors();
+});
+ui.wallThick.addEventListener('input', ()=>{
+  const w=parseFloat(ui.wallThick.value);
+  for(const it of items){
+    const oldV=it.wallMesh.geometry; it.wallMesh.geometry=buildWallRibbonGeometry(it.pathPoints, w); oldV.dispose();
+    const oldP=it.pickWallMesh.geometry; it.pickWallMesh.geometry=buildWallRibbonGeometry(it.pathPoints, w*PICK_BAND_SCALE); oldP.dispose();
+  }
+});
+ui.wallOpacity.addEventListener('input', ()=>{
+  const op=parseFloat(ui.wallOpacity.value);
+  for(const it of items){ it.wallMesh.material.opacity=op; it.wallMesh.material.transparent = op<1; }
+});
+
+/* ==== STL export ==== */
+ui.exportStl.addEventListener('click', ()=>{
+  const exporter=new STLExporter();
+  const group=new THREE.Group();
+  for(const it of items){
+    if(it.pipeMesh.visible) group.add(it.pipeMesh.clone());
+    if(it.wallMesh.visible) group.add(it.wallMesh.clone());
+  }
+  const stl=exporter.parse(group);
+  const blob=new Blob([stl],{type:'model/stl'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='isobars.stl'; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+});
+
+/* 初期可視 */
+basis.visible=true; gridXY.visible=true; gridZX.visible=true;
+</script>
+</body>
+</html>
