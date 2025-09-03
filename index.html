@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>3D天気図ビューアープラス</title>
 
-<!-- three.js & addons via importmap -->
 <script type="importmap">
 {
   "imports": {
@@ -45,13 +44,13 @@
   .muted{color:#6b7280;font-size:12px;margin-left:.4rem}
   canvas.grabbing{cursor:grabbing}
   canvas.hovering{cursor:ns-resize}
-
-  /* シンプルなメニュー */
   .menu{position:absolute; z-index:5; background:#fff; border:1px solid var(--border); border-radius:.5rem; box-shadow:0 8px 24px #0001; padding:.25rem; display:none; min-width:180px}
   .menu.open{display:block}
   .menu button{display:block; width:100%; text-align:left; padding:.5rem .7rem; border:none; background:transparent; border-radius:.4rem}
   .menu button:hover{background:#f1f5f9}
   .menu .sep{height:1px; background:#e5e7eb; margin:.25rem 0}
+  /* ★★★ フォーカス強調 */
+  .card.focus-ring{outline:2px solid #0b57d0; box-shadow:0 0 0 3px #0b57d033}
 </style>
 </head>
 <body>
@@ -65,13 +64,10 @@
 
     <span class="sp"></span>
 
-    <!-- 投影法 -->
     <select id="projection">
       <option value="persp" selected>透視図法</option>
       <option value="ortho">正射影図法</option>
     </select>
-
-    <!-- ビュー -->
     <select id="viewSelect">
       <option value="all">斜め視点</option>
       <option value="top">真上（XY）</option>
@@ -79,7 +75,6 @@
       <option value="side">側面（ZY）</option>
     </select>
 
-    <!-- 統合：開く -->
     <button id="openBtn">開く ▾</button>
     <input id="fileRaw" type="file" accept=".svg,.svgz,image/svg+xml,application/gzip">
     <input id="fileSaved" type="file" accept=".svg">
@@ -89,7 +84,6 @@
       <button data-act="open-saved">保存SVGを開く（本アプリ）</button>
     </div>
 
-    <!-- 統合：書き出し -->
     <button id="exportBtn">書き出し ▾</button>
     <div id="exportMenu" class="menu">
       <button data-act="export-stl">STLを書き出し</button>
@@ -97,13 +91,12 @@
       <button data-act="save-svg">SVGを保存</button>
     </div>
 
-    <!-- パネル -->
     <button id="panelToggle">パネル</button>
   </header>
 
   <div id="viewer">
     <canvas id="c"></canvas>
-    <div id="overlay">ドラッグ:回転 / 右ドラッグ:平行移動 / ホイール:ズーム / 線上ドラッグ:高さ変更（Shift=微 / Alt=粗）</div>
+    <div id="overlay">ドラッグ:回転 / 右ドラッグ:平行移動 / ホイール:ズーム / 線上ドラッグ:高さ変更（Shift=微 / Alt=粗）/ 手描きON: 視点と平行な原点平面に描画</div>
     <div id="dragHud"></div>
   </div>
 
@@ -127,7 +120,7 @@
 
     <div class="section">
       <h2>自動高さ（ラベル順・色も連動）</h2>
-      <div class="row"><label>有効</label><input id="autoMode" type="checkbox"></div><!-- 初期OFF -->
+      <div class="row"><label>有効</label><input id="autoMode" type="checkbox"></div>
       <div class="row"><label>間隔倍率</label><input id="gapFactor" type="range" min="0.2" max="3" step="0.05" value="1"></div>
       <div class="row"><label>平坦 ←→ 初期間隔</label><input id="autoBlend" type="range" min="0" max="1" step="0.01" value="1"></div>
       <div class="row"><span class="muted" id="labelInfo">ラベル未解析</span><span></span></div>
@@ -141,6 +134,23 @@
       <div class="row"><label>壁の厚さ（帯幅）</label><input id="wallThick" type="range" min="0.2" max="16" step="0.1" value="2.5"></div>
       <div class="row"><label>壁の不透明度</label><input id="wallOpacity" type="range" min="0" max="1" step="0.01" value="0.9"></div>
       <div class="row"><span class="muted">※パイプ/壁は同時表示可。ドラッグは表示中の形状に有効。</span><span></span></div>
+    </div>
+
+    <div class="section">
+      <h2>手書き3D描画</h2>
+      <div class="row"><label>有効（描画モード）</label><input id="drawEnable" type="checkbox"></div>
+      <div class="row">
+        <label>形状</label>
+        <select id="drawShape">
+          <option value="tube" selected>円断面（チューブ）</option>
+          <option value="rect">長方形断面（帯）</option>
+        </select>
+      </div>
+      <div class="row"><label>色</label><input id="drawColor" type="color" value="#ff0066"></div>
+      <div class="row"><label>円の直径 / 帯の幅</label><input id="drawDiaOrWidth" type="range" min="0.5" max="30" step="0.5" value="8"></div>
+      <div class="row"><label>帯の厚み（長方形のみ）</label><input id="drawThickness" type="range" min="0.2" max="20" step="0.2" value="3"></div>
+      <div class="row"><label>なめらかさ</label><input id="drawSampling" type="range" min="2" max="20" step="1" value="6"></div>
+      <div class="row"><span class="muted">※描く面は「現在の視点に平行」＋「原点を通る」平面です。</span><span></span></div>
     </div>
 
     <div class="section">
@@ -159,7 +169,6 @@ import * as pako from 'https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.esm.mjs
 import { FontLoader } from 'three/addons/loaders/FontLoader.js';
 import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
 
-/* ========= タッチ最適化：当たり判定の太さ係数 ========= */
 const PICK_TUBE_SCALE = 2.8;
 const PICK_BAND_SCALE = 1.8;
 
@@ -170,18 +179,12 @@ const ui = {
   dragHud: document.getElementById('dragHud'),
   projection: document.getElementById('projection'),
   viewSelect: document.getElementById('viewSelect'),
-
-  // 統合メニュー系
   openBtn: document.getElementById('openBtn'),
   exportBtn: document.getElementById('exportBtn'),
   openMenu: document.getElementById('openMenu'),
   exportMenu: document.getElementById('exportMenu'),
   fileRaw: document.getElementById('fileRaw'),
   fileSaved: document.getElementById('fileSaved'),
-
-  exportStl: null, // 使わない（メニューから発火）
-  saveSvg: null,   // 使わない（メニューから発火）
-
   panelToggle: document.getElementById('panelToggle'),
   bgColor: document.getElementById('bgColor'),
   basisVisible: document.getElementById('basisVisible'),
@@ -201,7 +204,13 @@ const ui = {
   pipeDia: document.getElementById('pipeDia'),
   wallThick: document.getElementById('wallThick'),
   wallOpacity: document.getElementById('wallOpacity'),
-  list: document.getElementById('list')
+  list: document.getElementById('list'),
+  drawEnable: document.getElementById('drawEnable'),
+  drawShape: document.getElementById('drawShape'),
+  drawColor: document.getElementById('drawColor'),
+  drawDiaOrWidth: document.getElementById('drawDiaOrWidth'),
+  drawThickness: document.getElementById('drawThickness'),
+  drawSampling: document.getElementById('drawSampling'),
 };
 
 /* ==== renderer / scene ==== */
@@ -222,7 +231,12 @@ const orthoCamera = new THREE.OrthographicCamera(-500,500,500,-500,-50000,50000)
 orthoCamera.up.set(0,0,1);
 orthoCamera.position.copy(perspCamera.position);
 
-function makeControls(cam){ if(controls) controls.dispose(); controls = new OrbitControls(cam, renderer.domElement); controls.enableDamping=true; controls.screenSpacePanning=false; }
+function makeControls(cam){
+  if(controls) controls.dispose();
+  controls = new OrbitControls(cam, renderer.domElement);
+  controls.enableDamping = true;
+  controls.screenSpacePanning = false;
+}
 function setOrthoFrustum(){
   const v=document.getElementById('viewer'); const aspect=v.clientWidth/v.clientHeight;
   const box=new THREE.Box3().setFromObject(chartGroup);
@@ -249,7 +263,15 @@ basis.add(new THREE.ArrowHelper(new THREE.Vector3(0,1,0),new THREE.Vector3(),300
 basis.add(new THREE.ArrowHelper(new THREE.Vector3(0,0,1),new THREE.Vector3(),300,0x0000ff,50,20));
 const fontLoader=new FontLoader();
 fontLoader.load('https://threejs.org/examples/fonts/helvetiker_regular.typeface.json',(font)=>{
-  const mk=(ch,col,pos)=>{ const g=new TextGeometry(ch,{font,size:40,height:5}); g.computeBoundingBox(); const m=new THREE.MeshBasicMaterial({color:col}); const mesh=new THREE.Mesh(g,m); const w=g.boundingBox.max.x-g.boundingBox.min.x; mesh.position.set(pos.x-w/2,pos.y,pos.z); basis.add(mesh); };
+  const mk=(ch,col,pos)=>{
+    const g=new TextGeometry(ch,{font,size:40,height:5});
+    g.computeBoundingBox();
+    const m=new THREE.MeshBasicMaterial({color:col});
+    const mesh=new THREE.Mesh(g,m);
+    const w=g.boundingBox.max.x-g.boundingBox.min.x;
+    mesh.position.set(pos.x-w/2,pos.y,pos.z);
+    basis.add(mesh);
+  };
   mk('X',0xff0000,{x:320,y:-20,z:0}); mk('Y',0x00ff00,{x:0,y:320,z:0}); mk('Z',0x0000ff,{x:0,y:-20,z:320});
 });
 const cube=new THREE.Mesh(new THREE.BoxGeometry(60,60,60),[
@@ -264,20 +286,35 @@ const cube=new THREE.Mesh(new THREE.BoxGeometry(60,60,60),[
 /* ==== containers ==== */
 const chartGroup=new THREE.Group(); scene.add(chartGroup);
 const rootLines=new THREE.Group(); chartGroup.add(rootLines);
+/* item:
+   {
+     pipeMesh, wallMesh, pickPipeMesh, pickWallMesh,
+     activeMesh, activePick,
+     pathPoints: THREE.Vector3[], path2D: {x,y}[],
+     height, ui, userColor, wallExtrudedZ, kind
+   }
+*/
 let items=[];
 let weatherPlane=null, lastSvgDims=null, lastRawSvgText="";
+let linesOffset = new THREE.Vector3(0,0,0); /* ★★★ centering オフセット */
 
 /* ==== render loop / resize ==== */
-function resize(){ const v=document.getElementById('viewer'); renderer.setSize(v.clientWidth,v.clientHeight,false); if(camera.isPerspectiveCamera){ camera.aspect=v.clientWidth/v.clientHeight; camera.updateProjectionMatrix(); } else setOrthoFrustum(); }
+function resize(){
+  const v=document.getElementById('viewer');
+  renderer.setSize(v.clientWidth,v.clientHeight,false);
+  if(camera.isPerspectiveCamera){ camera.aspect=v.clientWidth/v.clientHeight; camera.updateProjectionMatrix(); }
+  else setOrthoFrustum();
+}
 addEventListener('resize',resize); resize();
 (function anim(){ requestAnimationFrame(anim); controls.update(); renderer.render(scene,camera); })();
 
 /* ==== views ==== */
 function fitView(target=chartGroup){
-  const b=new THREE.Box3().setFromObject(target); const sz=new THREE.Vector3(), cen=new THREE.Vector3(); b.getSize(sz); b.getCenter(cen); if(!(isFinite(sz.x)&&isFinite(sz.y))) return;
+  const b=new THREE.Box3().setFromObject(target); const sz=new THREE.Vector3(), cen=new THREE.Vector3();
+  b.getSize(sz); b.getCenter(cen); if(!(isFinite(sz.x)&&isFinite(sz.y))) return;
   _target.copy(cen);
   if(camera.isPerspectiveCamera){
-    const maxDim=Math.max(sz.x,sz.y,sz.z);
+    const maxDim=Math.max(sz.x,sz.y,sz.z); /* ★ 修正: s→sz */
     const dist=maxDim*1.2/Math.tan(THREE.MathUtils.degToRad(perspCamera.fov*0.5));
     const dir=new THREE.Vector3(.75,.55,.35).normalize();
     camera.position.copy(cen.clone().add(dir.multiplyScalar(dist)));
@@ -296,7 +333,7 @@ function viewSide(){ const b=new THREE.Box3().setFromObject(chartGroup),c=new TH
 function colorFromHeight(h,maxH){ if(maxH<=0 || h<=0) return new THREE.Color(0xff0000); const t=Math.min(Math.max(h/maxH,0),1); const c=new THREE.Color(); c.setHSL((2/3)*t,1,0.5); return c; }
 function currentMaxHeightStrict(){ if(!items.length) return 0; let m=0; for(const it of items) if(it.height>m) m=it.height; return m; }
 
-/* ==== geometry builders ==== */
+/* ==== geometry ==== */
 function buildTubeGeometry(points, radius){
   const curve=new THREE.CatmullRomCurve3(points,false,'centripetal',0.5);
   const seg=Math.max(16, Math.min(2048, Math.floor(points.length*1.5)));
@@ -326,7 +363,6 @@ function buildWallRibbonGeometry(points, width, miterEps=0.25){
     right[i] = new THREE.Vector3(p.x - ax*scale, p.y - ay*scale, 0);
   }
   const positions = new Float32Array(n*4*3);
-  const uvs       = new Float32Array(n*4*2);
   const id = (i,k)=> i*4+k;
   for(let i=0;i<n;i++){
     const L=left[i], R=right[i];
@@ -334,11 +370,6 @@ function buildWallRibbonGeometry(points, width, miterEps=0.25){
     positions.set([R.x,R.y,0], (id(i,1))*3);
     positions.set([L.x,L.y,1], (id(i,2))*3);
     positions.set([R.x,R.y,1], (id(i,3))*3);
-    const u = i/(n-1);
-    uvs.set([u,0], (id(i,0))*2);
-    uvs.set([u,1], (id(i,1))*2);
-    uvs.set([u,0], (id(i,2))*2);
-    uvs.set([u,1], (id(i,3))*2);
   }
   const indices=[];
   for(let i=0;i<n-1;i++){
@@ -351,13 +382,58 @@ function buildWallRibbonGeometry(points, width, miterEps=0.25){
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(positions,3));
-  g.setAttribute('uv',       new THREE.BufferAttribute(uvs,2));
+  g.setIndex(indices);
+  g.computeVertexNormals();
+  return g;
+}
+/* 視点平面用の帯 */
+function buildRectBandOnPlane(points3, width, thickness, planeNormal){
+  const n = points3.length; if(n<2) return new THREE.BoxGeometry(0,0,0);
+  const halfW = width*0.5, halfT = Math.max(0.0001, thickness*0.5);
+  const tangents = new Array(n);
+  for(let i=0;i<n;i++){
+    const a=points3[Math.max(0,i-1)], b=points3[Math.min(n-1,i+1)];
+    const t = new THREE.Vector3().subVectors(b,a); if(t.lengthSq()<1e-12) t.set(1,0,0);
+    t.normalize(); tangents[i]=t;
+  }
+  const mArr=new Array(n);
+  for(let i=0;i<n;i++){
+    const m=new THREE.Vector3().crossVectors(planeNormal, tangents[i]);
+    if(m.lengthSq()<1e-12){ m.copy(i>0?mArr[i-1]:new THREE.Vector3(1,0,0)); }
+    m.normalize(); mArr[i]=m;
+  }
+  const positions = new Float32Array(n*4*3);
+  const id=(i,k)=>i*4+k;
+  for(let i=0;i<n;i++){
+    const p=points3[i], m=mArr[i], up=planeNormal;
+    const L = new THREE.Vector3().copy(p).addScaledVector(m, +halfW);
+    const R = new THREE.Vector3().copy(p).addScaledVector(m, -halfW);
+    const LB= new THREE.Vector3().copy(L).addScaledVector(up, -halfT);
+    const RB= new THREE.Vector3().copy(R).addScaledVector(up, -halfT);
+    const LT= new THREE.Vector3().copy(L).addScaledVector(up, +halfT);
+    const RT= new THREE.Vector3().copy(R).addScaledVector(up, +halfT);
+    positions.set([LB.x,LB.y,LB.z], (id(i,0))*3);
+    positions.set([RB.x,RB.y,RB.z], (id(i,1))*3);
+    positions.set([LT.x,LT.y,LT.z], (id(i,2))*3);
+    positions.set([RT.x,RT.y,RT.z], (id(i,3))*3);
+  }
+  const indices=[];
+  for(let i=0;i<n-1;i++){
+    const aLB=id(i,0), aRB=id(i,1), aLT=id(i,2), aRT=id(i,3);
+    const bLB=id(i+1,0), bRB=id(i+1,1), bLT=id(i+1,2), bRT=id(i+1,3);
+    indices.push(aLB,aLT,bLT, aLB,bLT,bLB);
+    indices.push(aRB,bRB,bRT, aRB,bRT,aRT);
+    indices.push(aLT,aRT,bRT, aLT,bRT,bLT);
+    indices.push(aLB,bLB,bRB, aLB,bRB,aRB);
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(positions,3));
   g.setIndex(indices);
   g.computeVertexNormals();
   return g;
 }
 
-/* ==== SVG 正規化 ==== */
+/* ==== 背景SVG ==== */
 function readSvgDims(svgEl){
   const vb=svgEl.getAttribute("viewBox");
   if(vb){ const a=vb.trim().split(/\s+|,/).map(Number); if(a.length===4&&a.every(n=>isFinite(n))) return {minX:a[0],minY:a[1],w:a[2],h:a[3]}; }
@@ -379,8 +455,6 @@ function normalizeSvgRoot(svgEl){
   svgEl.setAttribute("viewBox",`0 0 ${w} ${h}`);
   return {w,h};
 }
-
-/* ==== 背景（天気図画像） ==== */
 async function buildOrUpdateWeatherPlane(rawSvgText){
   if(!lastSvgDims) return; const {w,h}=lastSvgDims;
   const tex=await new THREE.TextureLoader().loadAsync('data:image/svg+xml;charset=utf-8,'+encodeURIComponent(rawSvgText));
@@ -390,7 +464,6 @@ async function buildOrUpdateWeatherPlane(rawSvgText){
   tex.minFilter = THREE.LinearMipmapLinearFilter;
   tex.magFilter = THREE.LinearFilter;
   tex.flipY=false;
-
   const mat=new THREE.MeshBasicMaterial({map:tex, transparent:true, opacity:parseFloat(ui.imgOpacity.value), side:THREE.DoubleSide});
   const geom=new THREE.PlaneGeometry(w,h);
   if(!weatherPlane){ weatherPlane=new THREE.Mesh(geom,mat); weatherPlane.renderOrder=-1; chartGroup.add(weatherPlane); }
@@ -401,10 +474,16 @@ async function buildOrUpdateWeatherPlane(rawSvgText){
     weatherPlane.geometry=geom; weatherPlane.material=mat;
   }
   weatherPlane.position.set(0,0,0);
-  weatherPlane.scale.set(1,-1,1); // Y反転
+  weatherPlane.scale.set(1,-1,1);
   applyImageUI();
 }
-function applyImageUI(){ if(!weatherPlane) return; weatherPlane.visible=ui.imgVisible.checked; weatherPlane.material.opacity=parseFloat(ui.imgOpacity.value); const s=parseFloat(ui.heightScale.value); weatherPlane.position.z=parseFloat(ui.imgHeight.value)*s; }
+function applyImageUI(){
+  if(!weatherPlane) return;
+  weatherPlane.visible=ui.imgVisible.checked;
+  weatherPlane.material.opacity=parseFloat(ui.imgOpacity.value);
+  const s=parseFloat(ui.heightScale.value);
+  weatherPlane.position.z=parseFloat(ui.imgHeight.value)*s;
+}
 ['imgVisible','imgOpacity','imgHeight','heightScale'].forEach(id=>ui[id].addEventListener('input',applyImageUI));
 
 /* ==== SVG → items ==== */
@@ -426,34 +505,28 @@ async function loadSVGFromString(svgText){
     const style=p.userData?.style||{}; const stroke=(style.stroke && style.stroke!=='none')?style.stroke:"#9aa4b2";
     for(const sub of p.subPaths){
       const pts2=sub.getPoints(Math.max(2,sampleN)); if(pts2.length<2) continue;
-      const path2D = pts2.map(pt=>({x:+pt.x, y:+pt.y}));
-      const pts3   = pts2.map(pt=>new THREE.Vector3(+pt.x, -pt.y, 0)); // 表示用（Y反転）
-
+      const pts3=pts2.map(pt=>new THREE.Vector3(+pt.x, -pt.y, 0));
       const pipeGeom = buildTubeGeometry(pts3, radius);
       const pipeMat  = new THREE.MeshStandardMaterial({color:new THREE.Color(stroke), roughness:.6, metalness:.06, side:THREE.DoubleSide});
       const pipeMesh = new THREE.Mesh(pipeGeom, pipeMat);
-
       const wallGeom = buildWallRibbonGeometry(pts3, bandW);
       const wallMat  = new THREE.MeshStandardMaterial({color:new THREE.Color(stroke), roughness:.7, metalness:.05, side:THREE.DoubleSide, transparent: wallOp<1, opacity: wallOp});
       const wallMesh = new THREE.Mesh(wallGeom, wallMat);
-
       const pickPipeGeom = buildTubeGeometry(pts3, radius * PICK_TUBE_SCALE);
       const pickPipeMat  = new THREE.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0.001, depthWrite:false});
       const pickPipeMesh = new THREE.Mesh(pickPipeGeom, pickPipeMat); pickPipeMesh.renderOrder = -1000;
-
       const pickWallGeom = buildWallRibbonGeometry(pts3, bandW * PICK_BAND_SCALE);
       const pickWallMat  = new THREE.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0.001, depthWrite:false});
       const pickWallMesh = new THREE.Mesh(pickWallGeom, pickWallMat); pickWallMesh.renderOrder = -1000;
 
       const cen=centroidXY(pts2), area=polygonArea(pts2);
       items.push({
-        pipeMesh, wallMesh,
-        pickPipeMesh, pickWallMesh,
+        pipeMesh, wallMesh, pickPipeMesh, pickWallMesh,
         activeMesh:null, activePick:null,
-        pathPoints:pts3, path2D,
-        height:0, ui:{}, centroid:cen, pressure:undefined, area, autoTarget:0
+        pathPoints:pts3, path2D: pts2.map(pt=>({x:+pt.x,y:+pt.y})),
+        height:0, ui:{}, centroid:cen, pressure:undefined, area, autoTarget:0,
+        userColor:null, wallExtrudedZ:true, kind:'svg'
       });
-
       linesGroup.add(pipeMesh, wallMesh, pickPipeMesh, pickWallMesh);
     }
   }
@@ -461,11 +534,12 @@ async function loadSVGFromString(svgText){
   const box=new THREE.Box3().setFromObject(linesGroup); const cen3=new THREE.Vector3(), sz=new THREE.Vector3();
   box.getCenter(cen3); box.getSize(sz);
   linesGroup.position.set(-cen3.x, -cen3.y, 0);
+  rootLines.add(linesGroup);
+  linesOffset.copy(linesGroup.position); /* ★★★ */
+
   const scale=600/Math.max(sz.x,sz.y); chartGroup.scale.setScalar(isFinite(scale)&&scale>0?scale:1);
 
-  rootLines.add(linesGroup);
   await assignPressuresFromLabelsOrAreas();
-
   applyModeVisibility();
   if (ui.autoMode.checked) applyAutoHeights();
   buildList(true);
@@ -474,7 +548,14 @@ async function loadSVGFromString(svgText){
 }
 
 /* ==== ラベル推定 ==== */
-function parseTranslate(tf){ let tx=0,ty=0; if(!tf) return {tx,ty}; const m=tf.match(/matrix\(([^)]+)\)/); if(m){const a=m[1].split(/[ ,]+/).map(Number); if(a.length===6&&a.every(n=>isFinite(n))){tx+=a[4];ty+=a[5];}} const t=tf.match(/translate\(([^)]+)\)/); if(t){const a=t[1].split(/[ ,]+/).map(Number); if(a.length>=1) tx+=a[0]||0; if(a.length>=2) ty+=a[1]||0;} return {tx,ty}; }
+function parseTranslate(tf){ 
+  let tx=0,ty=0; if(!tf) return {tx,ty};
+  const m=tf.match(/matrix\(([^)]+)\)/);
+  if(m){const a=m[1].split(/[ ,]+/).map(Number); if(a.length===6&&a.every(n=>isFinite(n))){tx+=a[4];ty+=a[5];}}
+  const t=tf.match(/translate\(([^)]+)\)/);
+  if(t){const a=t[1].split(/[ ,]+\s*/).map(Number); if(a.length>=1) tx+=a[0]||0; if(a.length>=2) ty+=a[1]||0;}
+  return {tx,ty};
+}
 function estimateXY(el){ let x=parseFloat(el.getAttribute("x")||"0"), y=parseFloat(el.getAttribute("y")||"0"), cur=el; while(cur&&cur.nodeType===1){ const tf=cur.getAttribute&&cur.getAttribute("transform"); const {tx,ty}=parseTranslate(tf||""); x+=tx; y+=ty; cur=cur.parentNode; } return {x,y}; }
 function readPressureLabels(svgText){
   const doc=new DOMParser().parseFromString(svgText,"image/svg+xml"); const svg=doc.querySelector("svg"); if(!svg) return [];
@@ -495,12 +576,12 @@ async function assignPressuresFromLabelsOrAreas(){
     }
   }else{
     ui.labelInfo.textContent='ラベルなし：面積ベースで自動配置';
-    const arr=items.slice().sort((a,b)=>a.area-b.a
-); arr.forEach((it,idx)=>{ it.pressure=idx; });
+    const arr=items.slice().sort((a,b)=>a.area-b.area);
+    arr.forEach((it,idx)=>{ it.pressure=idx; });
   }
 }
 
-/* ==== auto heights ==== */
+/* ==== auto / update ==== */
 function applyAutoHeights(){
   const gf=parseFloat(ui.gapFactor.value);
   const blend=parseFloat(ui.autoBlend.value);
@@ -512,8 +593,10 @@ function applyAutoHeights(){
   for(const it of items){ it.height=(it.autoTarget||0)*blend; }
   updateHeightsAndColors();
 }
-
-/* ==== height & color update ==== */
+/* ★★★ 色反映のルール
+   - userColor がある場合はそれを優先（手描きや手動色）
+   - それ以外は高さベースの自動色
+*/
 function updateHeightsAndColors(){
   const s=parseFloat(ui.heightScale.value);
   const maxH=currentMaxHeightStrict();
@@ -521,36 +604,51 @@ function updateHeightsAndColors(){
     const z = it.height * s;
 
     it.pipeMesh.position.z = z;
-    it.wallMesh.scale.z    = Math.max(z, 0.0001);
-    it.wallMesh.position.z = 0;
-
     it.pickPipeMesh.position.z = z;
-    it.pickWallMesh.scale.z    = Math.max(z, 0.0001);
-    it.pickWallMesh.position.z = 0;
 
-    const col = colorFromHeight(it.height, maxH);
+    if(it.wallExtrudedZ){
+      it.wallMesh.scale.z    = Math.max(z, 0.0001);
+      it.wallMesh.position.z = 0;
+      it.pickWallMesh.scale.z    = Math.max(z, 0.0001);
+      it.pickWallMesh.position.z = 0;
+    }else{
+      it.wallMesh.position.z = z;
+      it.pickWallMesh.position.z = z;
+      it.wallMesh.scale.z = 1;
+      it.pickWallMesh.scale.z = 1;
+    }
+
+    const col = it.userColor ? new THREE.Color(it.userColor) : colorFromHeight(it.height, maxH);
     it.pipeMesh.material.color.copy(col);
     it.wallMesh.material.color.copy(col);
     if(it.ui?.color) it.ui.color.value = `#${col.getHexString()}`;
   }
 }
-
-/* ==== mode visibility ==== */
 function applyModeVisibility(){
   const showPipe=ui.modePipe.checked;
   const showWall=ui.modeWall.checked;
   for(const it of items){
-    it.pipeMesh.visible = showPipe;
-    it.wallMesh.visible = showWall;
-    it.pickPipeMesh.visible = showPipe;
-    it.pickWallMesh.visible = showWall;
-
+    const visible = (it.ui?.vis?.checked ?? true);
+    it.pipeMesh.visible = showPipe && visible;
+    it.wallMesh.visible = showWall && visible;
+    it.pickPipeMesh.visible = showPipe && visible;
+    it.pickWallMesh.visible = showWall && visible;
     if (showWall){ it.activeMesh = it.wallMesh; it.activePick = it.pickWallMesh; }
     else { it.activeMesh = it.pipeMesh; it.activePick = it.pickPipeMesh; }
   }
 }
 
-/* ==== list ==== */
+/* ★★★ パネルのカードをフォーカス＆スクロール */
+function focusPanelCardForItem(it){
+  const el = it?.ui?.card;
+  if(!el) return;
+  el.classList.add('focus-ring');
+  el.setAttribute('tabindex','-1');
+  el.focus({preventScroll:true});
+  el.scrollIntoView({block:'nearest', behavior:'smooth'});
+  setTimeout(()=>el.classList.remove('focus-ring'), 800);
+}
+
 function buildList(orderByPressure=false){
   ui.list.innerHTML='';
   let arr=items.slice();
@@ -566,16 +664,12 @@ function buildList(orderByPressure=false){
     const card=document.createElement('div'); card.className='card';
     const t=document.createElement('div'); t.className='t';
     const c=document.createElement('span'); c.className='chip'; c.textContent=`L${(++i).toString().padStart(3,'0')}`;
-    const color=document.createElement('input'); color.type='color'; color.disabled=true; color.value='#9aa4b2';
-    const tag=document.createElement('span'); tag.className='small muted'; tag.textContent=isFinite(it.pressure)?`P=${it.pressure}`:`P=?`;
-    const hide=document.createElement('button'); hide.textContent='非表示'; hide.className='small';
-    hide.onclick=()=>{ 
-      const v=!(it.pipeMesh.visible||it.wallMesh.visible); 
-      it.pipeMesh.visible=v; it.wallMesh.visible=v; 
-      it.pickPipeMesh.visible=v; it.pickWallMesh.visible=v;
-      hide.textContent=v?'非表示':'表示';
-    };
-    t.append(c,color,tag,hide); card.appendChild(t);
+    const vis=document.createElement('input'); vis.type='checkbox'; vis.checked=true; vis.title='表示/非表示'; vis.onchange=()=>{ applyModeVisibility(); };
+    const color=document.createElement('input'); color.type='color';
+    /* ★★★ 手描きは色変更OK、SVGは自動色なのでUIは無効 */
+    color.disabled = (it.kind==='svg');
+    const tag=document.createElement('span'); tag.className='small muted'; tag.textContent=(it.kind==='svg')?(isFinite(it.pressure)?`P=${it.pressure}`:`P=?`):(it.kind==='drawRect'?'手描き帯':'手描きチューブ');
+    t.append(c, vis, color, tag); card.appendChild(t);
 
     const row1=document.createElement('div'); row1.className='row';
     const lab=document.createElement('label'); lab.textContent='高さ（Z）';
@@ -589,15 +683,25 @@ function buildList(orderByPressure=false){
     num.onchange=()=>{ const v=parseFloat(num.value)||0; it.height=v; slider.value=v; updateHeightsAndColors(); };
     row2.append(hint,num); card.appendChild(row2);
 
-    it.ui={slider,num,color};
+    /* ★★★ 色UIの初期値＆イベント */
+    const initCol = it.userColor ? it.userColor : `#${it.pipeMesh.material.color.getHexString()}`;
+    color.value = initCol;
+    color.oninput = ()=>{
+      const v = color.value;
+      it.userColor = v; // 手動色として固定
+      it.pipeMesh.material.color.set(v);
+      it.wallMesh.material.color.set(v);
+    };
+
+    it.ui={slider,num,color,vis,card};
     ui.list.appendChild(card);
   }
+  applyModeVisibility();
 }
 
-/* ==== ピッキング & ドラッグ ==== */
+/* ==== ピック & ドラッグ ==== */
 const raycaster=new THREE.Raycaster(); const pointer=new THREE.Vector2();
 let draggingItem=null; let lastClientY=0;
-
 function pickFromClientXY(clientX, clientY){
   const rect=ui.canvas.getBoundingClientRect();
   pointer.set((clientX-rect.left)/rect.width*2-1, -(clientY-rect.top)/rect.height*2+1);
@@ -618,7 +722,127 @@ function updateHudByClientXY(clientX, clientY, h){
   ui.dragHud.style.background=`rgba(${r},${g},${b},.9)`;
   ui.dragHud.textContent=`Z = ${h.toFixed(2)}`;
 }
+
+const drawState = { enabled:false, drawing:false, pts:[], tempMesh:null, tempPick:null, plane:new THREE.Plane(new THREE.Vector3(0,0,1),0) };
+function updateDrawPlaneFromCamera(){
+  const n = new THREE.Vector3();
+  camera.getWorldDirection(n).normalize();
+  drawState.plane.set(n, 0);
+}
+function screenToPlanePoint(clientX, clientY){
+  const rect=ui.canvas.getBoundingClientRect();
+  pointer.set((clientX-rect.left)/rect.width*2-1, -(clientY-rect.top)/rect.height*2+1);
+  raycaster.setFromCamera(pointer,camera);
+  const p = new THREE.Vector3();
+  if(raycaster.ray.intersectPlane(drawState.plane, p)) return p;
+  return null;
+}
+function buildOrUpdateTemp(){
+  const col = new THREE.Color(ui.drawColor.value);
+  const shape = ui.drawShape.value;
+  if(drawState.pts.length<2){
+    if(drawState.tempMesh){ drawState.tempMesh.visible=false; drawState.tempPick.visible=false; }
+    return;
+  }
+
+  let geom, pickGeom, mat, pickMat;
+  if(shape==='tube'){
+    const dia = parseFloat(ui.drawDiaOrWidth.value);
+    geom = buildTubeGeometry(drawState.pts, dia/2);
+    pickGeom = buildTubeGeometry(drawState.pts, (dia/2)*PICK_TUBE_SCALE);
+  }else{
+    const width = parseFloat(ui.drawDiaOrWidth.value);
+    const thick = parseFloat(ui.drawThickness.value);
+    const n = drawState.plane.normal.clone().normalize();
+    geom = buildRectBandOnPlane(drawState.pts, width, thick, n);
+    pickGeom = buildRectBandOnPlane(drawState.pts, width*PICK_BAND_SCALE, thick*PICK_BAND_SCALE, n);
+  }
+  mat = new THREE.MeshStandardMaterial({color:col, roughness:.6, metalness:.06, side:THREE.DoubleSide});
+  pickMat = new THREE.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0.001, depthWrite:false});
+
+  if(!drawState.tempMesh){
+    drawState.tempMesh = new THREE.Mesh(geom, mat);
+    drawState.tempPick = new THREE.Mesh(pickGeom, pickMat);
+    drawState.tempPick.renderOrder=-1000;
+    chartGroup.add(drawState.tempMesh, drawState.tempPick);
+  }else{
+    drawState.tempMesh.geometry.dispose();
+    drawState.tempMesh.geometry = geom;
+    drawState.tempMesh.material.color.copy(col);
+    drawState.tempPick.geometry.dispose();
+    drawState.tempPick.geometry = pickGeom;
+  }
+  drawState.tempMesh.visible = true;
+  drawState.tempPick.visible = true;
+}
+function commitTempToItem(){
+  if(!drawState.tempMesh) return;
+  const col = new THREE.Color(ui.drawColor.value);
+  const shape = ui.drawShape.value;
+  const width = parseFloat(ui.drawDiaOrWidth.value);
+  const thick = parseFloat(ui.drawThickness.value);
+  const n = drawState.plane.normal.clone().normalize();
+
+  let pipeMesh, wallMesh, pickPipeMesh, pickWallMesh, kind, wallExtrudedZ;
+
+  if(shape==='tube'){
+    const pts3 = drawState.pts.map(p=> p.clone());
+    pipeMesh = new THREE.Mesh(buildTubeGeometry(pts3, width/2), new THREE.MeshStandardMaterial({color:col, roughness:.6, metalness:.06, side:THREE.DoubleSide}));
+    const w = Math.max(parseFloat(ui.wallThick.value), 0.5);
+    wallMesh = new THREE.Mesh(buildRectBandOnPlane(pts3, w, Math.max(1, w*0.4), n), new THREE.MeshStandardMaterial({color:col, roughness:.6, metalness:.06, side:THREE.DoubleSide, transparent:true, opacity:parseFloat(ui.wallOpacity.value)}));
+    pickPipeMesh = new THREE.Mesh(buildTubeGeometry(pts3, (width/2)*PICK_TUBE_SCALE), new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:0.001,depthWrite:false}));
+    pickWallMesh = new THREE.Mesh(buildRectBandOnPlane(pts3, w*PICK_BAND_SCALE, Math.max(1, w*0.4)*PICK_BAND_SCALE, n), new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:0.001,depthWrite:false}));
+    kind='drawTube'; wallExtrudedZ=false;
+  }else{
+    const pts3 = drawState.pts.map(p=> p.clone());
+    wallMesh = new THREE.Mesh(buildRectBandOnPlane(pts3, width, thick, n), new THREE.MeshStandardMaterial({color:col, roughness:.6, metalness:.06, side:THREE.DoubleSide}));
+    pipeMesh = new THREE.Mesh(new THREE.BoxGeometry(0,0,0), new THREE.MeshBasicMaterial({visible:false}));
+    pickWallMesh = new THREE.Mesh(buildRectBandOnPlane(pts3, width*PICK_BAND_SCALE, thick*PICK_BAND_SCALE, n), new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:0.001,depthWrite:false}));
+    pickPipeMesh = new THREE.Mesh(new THREE.BoxGeometry(0,0,0), new THREE.MeshBasicMaterial({visible:false}));
+    kind='drawRect'; wallExtrudedZ=false;
+  }
+
+  const it = {
+    pipeMesh, wallMesh, pickPipeMesh, pickWallMesh,
+    activeMesh:null, activePick:null,
+    pathPoints: drawState.pts.map(p=> p.clone()),
+    path2D: drawState.pts.map(p=>({x:p.x, y:-p.y})),
+    height: 0, ui:{}, centroid:{x:0,y:0}, pressure:undefined, area:0, autoTarget:0,
+    userColor: `#${col.getHexString()}`, wallExtrudedZ, kind
+  };
+  items.push(it);
+  rootLines.add(pipeMesh, wallMesh, pickPipeMesh, pickWallMesh);
+
+  drawState.tempMesh.geometry.dispose();
+  drawState.tempPick.geometry.dispose();
+  chartGroup.remove(drawState.tempMesh, drawState.tempPick);
+  drawState.tempMesh=null; drawState.tempPick=null;
+  drawState.pts.length=0;
+
+  buildList(false);
+  updateHeightsAndColors();
+
+  if(kind==='drawRect' && !ui.modeWall.checked){
+    ui.modeWall.checked = true;
+  }
+  applyModeVisibility();
+}
+
+/* ==== Pointer ==== */
 ui.canvas.addEventListener('pointerdown',(e)=>{
+  const drawOn = ui.drawEnable.checked;
+  if(drawOn){
+    updateDrawPlaneFromCamera();
+    const p = screenToPlanePoint(e.clientX, e.clientY);
+    if(!p) return;
+    controls.enabled=false;
+    ui.canvas.setPointerCapture(e.pointerId);
+    Object.assign(drawState, {drawing:true, pts:[p.clone()]});
+    buildOrUpdateTemp();
+    e.preventDefault();
+    return;
+  }
+
   if(e.button!==0) return;
   const hit = pickFromClientXY(e.clientX, e.clientY);
   if(hit){
@@ -627,26 +851,31 @@ ui.canvas.addEventListener('pointerdown',(e)=>{
     controls.enabled = false;
     ui.canvas.classList.add('grabbing');
     ui.dragHud.style.display='block';
+    /* ★★★ ドラッグ開始でカードをフォーカス */
+    focusPanelCardForItem(draggingItem);
     updateHudByClientXY(e.clientX, e.clientY, draggingItem.height);
     ui.canvas.setPointerCapture(e.pointerId);
     e.preventDefault();
   }
 });
 ui.canvas.addEventListener('pointermove',(e)=>{
+  if(drawState.drawing){
+    const p = screenToPlanePoint(e.clientX, e.clientY);
+    if(!p) return;
+    const last=drawState.pts[drawState.pts.length-1];
+    const minStep = Math.max(0.5, (20 - parseInt(ui.drawSampling.value,10))*0.5);
+    if(!last || p.distanceTo(last)>minStep){
+      drawState.pts.push(p.clone());
+      buildOrUpdateTemp();
+    }
+    e.preventDefault();
+    return;
+  }
   if(draggingItem){
     const dy = e.clientY - lastClientY; lastClientY = e.clientY;
     let sens=parseFloat(ui.dragSensitivity.value);
     if(e.shiftKey) sens*=.2; if(e.altKey) sens*=3.0;
     draggingItem.height += -dy * sens;
-
-    const s = parseFloat(ui.heightScale.value);
-    const z = draggingItem.height * s;
-    draggingItem.pipeMesh.position.z = z;
-    draggingItem.pickPipeMesh.position.z = z;
-    draggingItem.wallMesh.scale.z = Math.max(z, 0.0001);
-    draggingItem.pickWallMesh.scale.z = Math.max(z, 0.0001);
-    draggingItem.wallMesh.position.z = 0;
-    draggingItem.pickWallMesh.position.z = 0;
 
     if(draggingItem.ui?.slider) draggingItem.ui.slider.value=draggingItem.height;
     if(draggingItem.ui?.num)    draggingItem.ui.num.value=draggingItem.height.toFixed(2);
@@ -657,9 +886,16 @@ ui.canvas.addEventListener('pointermove',(e)=>{
     return;
   }
   const over = pickFromClientXY(e.clientX, e.clientY);
-  ui.canvas.classList.toggle('hovering', !!over);
+  ui.canvas.classList.toggle('hovering', !!over && !ui.drawEnable.checked);
 });
-function endDrag(e){
+function endDrawOrDrag(e){
+  if(drawState.drawing){
+    drawState.drawing=false;
+    controls.enabled=true;
+    commitTempToItem();
+    if(e) ui.canvas.releasePointerCapture(e.pointerId);
+    return;
+  }
   if(draggingItem){
     updateHeightsAndColors();
     draggingItem=null;
@@ -669,11 +905,11 @@ function endDrag(e){
     if(e) ui.canvas.releasePointerCapture(e.pointerId);
   }
 }
-ui.canvas.addEventListener('pointerup', endDrag);
-ui.canvas.addEventListener('pointercancel', endDrag);
-ui.canvas.addEventListener('pointerleave', (e)=>{ if(draggingItem) endDrag(e); });
+ui.canvas.addEventListener('pointerup', endDrawOrDrag);
+ui.canvas.addEventListener('pointercancel', endDrawOrDrag);
+ui.canvas.addEventListener('pointerleave', (e)=>{ if(drawState.drawing || draggingItem) endDrawOrDrag(e); });
 
-/* ==== 気象庁SVG/SVGZ 読み込み ==== */
+/* ==== I/O ==== */
 function tryDecodeUtf8(u8){ try{ const txt=new TextDecoder("utf-8",{fatal:false}).decode(u8); if(txt.includes("<svg")||txt.includes("<?xml")) return txt; }catch{} return null; }
 async function readSvgOrSvgz(file){
   const buf=await file.arrayBuffer(); const u8=new Uint8Array(buf);
@@ -692,15 +928,13 @@ async function readSvgOrSvgz(file){
 }
 function extractIsobarsOnly(svgText){
   const doc=new DOMParser().parseFromString(svgText,"image/svg+xml");
-  const svg=doc.querySelector("svg"); if(!svg) return svgText;
+  const svg=doc.querySelector("svg"); if(!svg) return svgText; 
   const {w,h}=normalizeSvgRoot(svg);
   lastSvgDims={w,h};
   const contours=svg.querySelectorAll('g#weatherChart g.contour');
   const outDoc=document.implementation.createDocument("http://www.w3.org/2000/svg","svg",null);
   const outSvg=outDoc.documentElement; outSvg.setAttribute("xmlns","http://www.w3.org/2000/svg");
-  outSvg.setAttribute("viewBox",`0 0 ${w} ${h}`);
-  outSvg.setAttribute("width",String(w));
-  outSvg.setAttribute("height",String(h));
+  outSvg.setAttribute("viewBox",`0 0 ${w} ${h}`); outSvg.setAttribute("width",String(w)); outSvg.setAttribute("height",String(h));
   const DEFAULT_STROKE="#9aa4b2";
   contours.forEach(cont=>{
     cont.querySelectorAll("path, polyline, circle, rect, ellipse").forEach(el=>{
@@ -715,8 +949,15 @@ function extractIsobarsOnly(svgText){
   return new XMLSerializer().serializeToString(outSvg);
 }
 
-/* ==== プロジェクトSVGの保存 ==== */
-function pointsToAttr(points){ return points.map(p=>`${(+p.x).toFixed(3)},${(+p.y).toFixed(3)}`).join(' '); }
+/* ==== 保存（正規化座標） ==== */
+function pointsToAttr2D(points){ return points.map(p=>`${(+p.x).toFixed(3)},${(+p.y).toFixed(3)}`).join(' '); }
+function pointsToAttr3D(points){ return points.map(p=>`${(+p.x).toFixed(3)} ${(+p.y).toFixed(3)} ${(+p.z).toFixed(3)}`).join(';'); }
+function getCanonicalPts3(it){
+  if(it.kind === 'svg') return it.pathPoints.map(p=>p.clone());
+  return it.pathPoints.map(p=> new THREE.Vector3(p.x - linesOffset.x, p.y - linesOffset.y, p.z));
+}
+function canonical3Dto2D(pts3){ return pts3.map(v=>({x:v.x, y:-v.y})); }
+
 function buildProjectSVG(){
   const doc = document.implementation.createDocument("http://www.w3.org/2000/svg","svg",null);
   const svg = doc.documentElement;
@@ -724,7 +965,6 @@ function buildProjectSVG(){
   if(lastSvgDims){ svg.setAttribute("viewBox",`0 0 ${lastSvgDims.w} ${lastSvgDims.h}`); svg.setAttribute("width",String(lastSvgDims.w)); svg.setAttribute("height",String(lastSvgDims.h)); }
   svg.setAttribute("data-app","3disobarsplus");
 
-  // 背景
   if(lastRawSvgText){
     const bgDoc = new DOMParser().parseFromString(lastRawSvgText,"image/svg+xml");
     const bgRoot = bgDoc.querySelector("svg");
@@ -738,19 +978,25 @@ function buildProjectSVG(){
     }
   }
 
-  // 等圧線
   const iso = doc.createElementNS("http://www.w3.org/2000/svg","g");
   iso.setAttribute("id","isobars3d");
   iso.setAttribute("data-app","3disobarsplus");
-  iso.setAttribute("data-version","1");
+  iso.setAttribute("data-version","5"); /* ★ version up */
   for(const it of items){
+    const ptsCanon3 = getCanonicalPts3(it);
+    const pts2 = canonical3Dto2D(ptsCanon3);
     const poly = doc.createElementNS("http://www.w3.org/2000/svg","polyline");
     poly.setAttribute("fill","none");
-    const col = `#${it.pipeMesh.material.color.getHexString()}`;
+    const col = it.userColor ? it.userColor : `#${it.pipeMesh.material.color.getHexString()}`;
     poly.setAttribute("stroke", col);
     poly.setAttribute("stroke-width","1");
-    poly.setAttribute("points", pointsToAttr(it.path2D));
+    poly.setAttribute("points", pointsToAttr2D(pts2));
+    poly.setAttribute("data-pts3", pointsToAttr3D(ptsCanon3));
     poly.setAttribute("data-height", String(+it.height.toFixed(3)));
+    poly.setAttribute("data-visible", (it.ui?.vis?.checked ?? true) ? "1":"0");
+    poly.setAttribute("data-kind", it.kind||'svg');
+    poly.setAttribute("data-wall-extruded", it.wallExtrudedZ? "1":"0");
+    poly.setAttribute("data-usercolor", it.userColor ? "1":"0"); /* ★★★ 手動色フラグ */
     iso.appendChild(poly);
   }
   svg.appendChild(iso);
@@ -766,9 +1012,40 @@ function buildProjectSVG(){
 
   return new XMLSerializer().serializeToString(svg);
 }
+function doSaveSVG(){
+  const svgText = buildProjectSVG();
+  const blob = new Blob([svgText], {type:"image/svg+xml"});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = '3disobarsplus.svg';
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+function doExportSTL(){
+  const exporter=new STLExporter();
+  const group=new THREE.Group();
+  for(const it of items){
+    const visible = (it.ui?.vis?.checked ?? true);
+    if(!visible) continue;
+    if(it.pipeMesh.visible) group.add(it.pipeMesh.clone());
+    if(it.wallMesh.visible) group.add(it.wallMesh.clone());
+  }
+  const stl=exporter.parse(group);
+  const blob=new Blob([stl],{type:'model/stl'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='isobars.stl'; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+}
 
-/* ==== プロジェクトSVGの読込 ==== */
-function parsePointsAttr(str){
+/* ==== 保存SVGの再読込 ==== */
+function parsePts3Attr(str){
+  const out=[]; if(!str) return out;
+  str.split(';').forEach(tok=>{
+    const [x,y,z]=tok.trim().split(/[ ,]+/).map(Number);
+    if(isFinite(x)&&isFinite(y)&&isFinite(z)) out.push(new THREE.Vector3(x,y,z));
+  });
+  return out;
+}
+function parsePointsAttr2D(str){
   const out=[]; if(!str) return out;
   str.trim().split(/\s+/).forEach(tok=>{
     const [x,y]=tok.split(',').map(Number);
@@ -802,54 +1079,77 @@ async function loadProjectSVG(svgText){
   const linesGroup=new THREE.Group();
   const polylines = Array.from(isoGroup.querySelectorAll('polyline'));
   for(const poly of polylines){
-    const pts2 = parsePointsAttr(poly.getAttribute('points')||'');
-    if(pts2.length<2) continue;
+    const kind = poly.getAttribute('data-kind')||'svg';
+    const pts3 = parsePts3Attr(poly.getAttribute('data-pts3')||'');
+    const pts2 = parsePointsAttr2D(poly.getAttribute('points')||'');
     const height = parseFloat(poly.getAttribute('data-height')||'0')||0;
     const stroke = poly.getAttribute('stroke') || '#9aa4b2';
+    const visible = poly.getAttribute('data-visible')!=="0";
+    const wallExtrudedZ = poly.getAttribute('data-wall-extruded')==="1";
+    const userColorFlag = poly.getAttribute('data-usercolor'); /* ★★★ */
 
-    const pts3 = pts2.map(p=>new THREE.Vector3(+p.x, -p.y, 0));
+    /* ★★★ ここで正規化済みの pts3 を linesGroup ローカルとして使う */
+    const pathPoints = (pts3.length? pts3 : pts2.map(p=>new THREE.Vector3(p.x, -p.y, 0)));
 
-    const pipeGeom = buildTubeGeometry(pts3, radius);
-    const pipeMat  = new THREE.MeshStandardMaterial({color:new THREE.Color(stroke), roughness:.6, metalness:.06, side:THREE.DoubleSide});
-    const pipeMesh = new THREE.Mesh(pipeGeom, pipeMat);
+    let pipeMesh, wallMesh, pickPipeMesh, pickWallMesh, wallExZ;
 
-    const wallGeom = buildWallRibbonGeometry(pts3, bandW);
-    const wallMat  = new THREE.MeshStandardMaterial({color:new THREE.Color(stroke), roughness:.7, metalness:.05, side:THREE.DoubleSide, transparent: wallOp<1, opacity: wallOp});
-    const wallMesh = new THREE.Mesh(wallGeom, wallMat);
+    if(kind==='drawRect'){
+      const normal = new THREE.Vector3(0,0,1);
+      wallMesh = new THREE.Mesh(buildRectBandOnPlane(pathPoints, Math.max(bandW,1), Math.max(1,bandW*0.4), normal), new THREE.MeshStandardMaterial({color:new THREE.Color(stroke), roughness:.6, metalness:.06, side:THREE.DoubleSide, transparent:true, opacity:wallOp}));
+      pipeMesh = new THREE.Mesh(new THREE.BoxGeometry(0,0,0), new THREE.MeshBasicMaterial({visible:false}));
+      pickWallMesh = new THREE.Mesh(buildRectBandOnPlane(pathPoints, Math.max(bandW,1)*PICK_BAND_SCALE, Math.max(1,bandW*0.4)*PICK_BAND_SCALE, normal), new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:0.001,depthWrite:false}));
+      pickPipeMesh = new THREE.Mesh(new THREE.BoxGeometry(0,0,0), new THREE.MeshBasicMaterial({visible:false}));
+      wallExZ=false;
+    }else{
+      pipeMesh = new THREE.Mesh(buildTubeGeometry(pathPoints, radius), new THREE.MeshStandardMaterial({color:new THREE.Color(stroke), roughness:.6, metalness:.06, side:THREE.DoubleSide}));
+      if(wallExtrudedZ || kind==='svg'){
+        wallMesh = new THREE.Mesh(buildWallRibbonGeometry(pathPoints, bandW), new THREE.MeshStandardMaterial({color:new THREE.Color(stroke), roughness:.7, metalness:.05, side:THREE.DoubleSide, transparent: wallOp<1, opacity: wallOp}));
+        pickWallMesh = new THREE.Mesh(buildWallRibbonGeometry(pathPoints, bandW*PICK_BAND_SCALE), new THREE.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0.001, depthWrite:false}));
+        wallExZ=true;
+      }else{
+        const normal = new THREE.Vector3(0,0,1);
+        wallMesh = new THREE.Mesh(buildRectBandOnPlane(pathPoints, Math.max(bandW,1), Math.max(1,bandW*0.4), normal), new THREE.MeshStandardMaterial({color:new THREE.Color(stroke), roughness:.6, metalness:.06, side:THREE.DoubleSide, transparent:true, opacity:wallOp}));
+        pickWallMesh = new THREE.Mesh(buildRectBandOnPlane(pathPoints, Math.max(bandW,1)*PICK_BAND_SCALE, Math.max(1,bandW*0.4)*PICK_BAND_SCALE, normal), new THREE.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0.001, depthWrite:false}));
+        wallExZ=false;
+      }
+      pickPipeMesh = new THREE.Mesh(buildTubeGeometry(pathPoints, radius * PICK_TUBE_SCALE), new THREE.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0.001, depthWrite:false}));
+    }
 
-    const pickPipeGeom = buildTubeGeometry(pts3, radius * PICK_TUBE_SCALE);
-    const pickPipeMat  = new THREE.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0.001, depthWrite:false});
-    const pickPipeMesh = new THREE.Mesh(pickPipeGeom, pickPipeMat); pickPipeMesh.renderOrder = -1000;
+    /* ★★★ userColor の扱い：
+       - data-usercolor="1" または kind != 'svg'（後方互換）なら userColor=stroke（手動色/手描き色）
+       - それ以外（SVG 等圧線）は null にして自動色へ
+    */
+    const userColor =
+      (userColorFlag === '1') ? stroke :
+      (kind !== 'svg' && userColorFlag !== '0') ? stroke : null;
 
-    const pickWallGeom = buildWallRibbonGeometry(pts3, bandW * PICK_BAND_SCALE);
-    const pickWallMat  = new THREE.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0.001, depthWrite:false});
-    const pickWallMesh = new THREE.Mesh(pickWallGeom, pickWallMat); pickWallMesh.renderOrder = -1000;
-
-    const cen = centroidXY(pts2), area=polygonArea(pts2);
     const it = {
-      pipeMesh, wallMesh,
-      pickPipeMesh, pickWallMesh,
+      pipeMesh, wallMesh, pickPipeMesh, pickWallMesh,
       activeMesh:null, activePick:null,
-      pathPoints:pts3, path2D:pts2,
-      height, ui:{}, centroid:cen, pressure:undefined, area, autoTarget:0
+      pathPoints, path2D: pts2,
+      height, ui:{}, centroid:{x:0,y:0}, pressure:undefined, area:0, autoTarget:0,
+      userColor, wallExtrudedZ: (wallExZ ?? wallExtrudedZ), kind
     };
     items.push(it);
     linesGroup.add(pipeMesh, wallMesh, pickPipeMesh, pickWallMesh);
+    it.ui.vis = {checked:visible};
   }
 
   const box=new THREE.Box3().setFromObject(linesGroup); const cen3=new THREE.Vector3(), sz=new THREE.Vector3();
   box.getCenter(cen3); box.getSize(sz);
   linesGroup.position.set(-cen3.x, -cen3.y, 0);
+  rootLines.add(linesGroup);
+  linesOffset.copy(linesGroup.position); /* ★★★ */
+
   const scale=600/Math.max(sz.x,sz.y); chartGroup.scale.setScalar(isFinite(scale)&&scale>0?scale:1);
 
-  rootLines.add(linesGroup);
-  updateHeightsAndColors();
-  applyModeVisibility();
   buildList(true);
+  updateHeightsAndColors(); /* ★★★ 読み込み直後に高さ→色の自動反映 */
+  applyModeVisibility();
   fitView(chartGroup);
 }
 
-/* ==== UI: メニュー挙動 ==== */
+/* ==== メニュー ==== */
 function toggleMenu(menu, anchorBtn){
   const open = !menu.classList.contains('open');
   document.querySelectorAll('.menu.open').forEach(m=>m.classList.remove('open'));
@@ -860,14 +1160,11 @@ function toggleMenu(menu, anchorBtn){
   menu.classList.add('open');
 }
 function closeMenus(){ document.querySelectorAll('.menu.open').forEach(m=>m.classList.remove('open')); }
-
-ui.openBtn.addEventListener('click', ()=> toggleMenu(ui.openMenu, ui.openBtn));
-ui.exportBtn.addEventListener('click', ()=> toggleMenu(ui.exportMenu, ui.exportBtn));
+document.getElementById('openBtn').addEventListener('click', ()=> toggleMenu(ui.openMenu, ui.openBtn));
+document.getElementById('exportBtn').addEventListener('click', ()=> toggleMenu(ui.exportMenu, ui.exportBtn));
 addEventListener('click', (e)=>{
   if(!e.target.closest('.menu') && ![ui.openBtn, ui.exportBtn].includes(e.target)) closeMenus();
 });
-
-/* メニュー選択 */
 ui.openMenu.addEventListener('click', (e)=>{
   const act = e.target?.dataset?.act; if(!act) return;
   closeMenus();
@@ -881,30 +1178,7 @@ ui.exportMenu.addEventListener('click', (e)=>{
   if(act==='save-svg')  doSaveSVG();
 });
 
-/* 旧ボタン相当の処理 */
-function doSaveSVG(){
-  const svgText = buildProjectSVG();
-  const blob = new Blob([svgText], {type:"image/svg+xml"});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = '3disobarsplus.svg';
-  a.click();
-  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
-}
-function doExportSTL(){
-  const exporter=new STLExporter();
-  const group=new THREE.Group();
-  for(const it of items){
-    if(it.pipeMesh.visible) group.add(it.pipeMesh.clone());
-    if(it.wallMesh.visible) group.add(it.wallMesh.clone());
-  }
-  const stl=exporter.parse(group);
-  const blob=new Blob([stl],{type:'model/stl'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='isobars.stl'; a.click();
-  setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
-}
-
-/* ==== 入出力（ファイル選択） ==== */
+/* ==== 入出力イベント ==== */
 ui.fileRaw.addEventListener('change', async (e)=>{
   const f=e.target.files?.[0]; if(!f) return;
   try{
@@ -928,24 +1202,23 @@ ui.fileSaved.addEventListener('change', async (e)=>{
   await loadProjectSVG(text);
 });
 
-/* ==== 残りのUI ==== */
+/* ==== その他UI ==== */
 ui.bgColor.addEventListener('input', e=>{ scene.background=new THREE.Color(e.target.value); });
 ui.basisVisible.addEventListener('change', e=>{ basis.visible=e.target.checked; });
 ui.gridVisible.addEventListener('change', e=>{ const v=e.target.checked; gridXY.visible=v; gridZX.visible=v; });
 ui.heightScale.addEventListener('input', ()=>{ updateHeightsAndColors(); applyImageUI(); });
-
 ui.viewSelect.addEventListener('change', e=>{ const v=e.target.value; if(v==='top') viewTop(); else if(v==='front') viewFront(); else if(v==='side') viewSide(); else fitView(chartGroup); });
 ui.projection.addEventListener('change', e=>{ (e.target.value==='ortho')?useOrthographic():usePerspective(); fitView(chartGroup); });
 ui.panelToggle.addEventListener('click', ()=>{ const open=ui.app.getAttribute('data-panel')!=='closed'; ui.app.setAttribute('data-panel', open?'closed':'open'); setTimeout(resize,0); });
-
-ui.autoMode.addEventListener('change', ()=>{ if(ui.autoMode.checked) applyAutoHeights(); else { for(const it of items){ it.height=0; if(it.ui?.slider) it.ui.slider.value=0; if(it.ui?.num) it.ui.num.value='0.00'; } updateHeightsAndColors(); }});
+ui.autoMode.addEventListener('change', ()=>{
+  if(ui.autoMode.checked) applyAutoHeights();
+  else { for(const it of items){ it.height=0; if(it.ui?.slider) it.ui.slider.value=0; if(it.ui?.num) it.ui.num.value='0.00'; } updateHeightsAndColors(); }
+});
 ui.gapFactor.addEventListener('input', ()=>{ if(ui.autoMode.checked) applyAutoHeights(); });
 ui.autoBlend.addEventListener('input', ()=>{ if(ui.autoMode.checked) applyAutoHeights(); });
-
 function syncMode(){ applyModeVisibility(); updateHeightsAndColors(); }
 ui.modePipe.addEventListener('change', syncMode);
 ui.modeWall.addEventListener('change', syncMode);
-
 ui.pipeDia.addEventListener('input', ()=>{
   const r=parseFloat(ui.pipeDia.value)/2;
   for(const it of items){
@@ -957,8 +1230,14 @@ ui.pipeDia.addEventListener('input', ()=>{
 ui.wallThick.addEventListener('input', ()=>{
   const w=parseFloat(ui.wallThick.value);
   for(const it of items){
-    const oldV=it.wallMesh.geometry; it.wallMesh.geometry=buildWallRibbonGeometry(it.pathPoints, w); oldV.dispose();
-    const oldP=it.pickWallMesh.geometry; it.pickWallMesh.geometry=buildWallRibbonGeometry(it.pathPoints, w*PICK_BAND_SCALE); oldP.dispose();
+    if(it.wallExtrudedZ){
+      const oldV=it.wallMesh.geometry; it.wallMesh.geometry=buildWallRibbonGeometry(it.pathPoints, w); oldV.dispose();
+      const oldP=it.pickWallMesh.geometry; it.pickWallMesh.geometry=buildWallRibbonGeometry(it.pathPoints, w*PICK_BAND_SCALE); oldP.dispose();
+    }else{
+      const normal=new THREE.Vector3(0,0,1);
+      const oldV=it.wallMesh.geometry; it.wallMesh.geometry=buildRectBandOnPlane(it.pathPoints, Math.max(w,1), Math.max(1,w*0.4), normal); oldV.dispose();
+      const oldP=it.pickWallMesh.geometry; it.pickWallMesh.geometry=buildRectBandOnPlane(it.pathPoints, Math.max(w,1)*PICK_BAND_SCALE, Math.max(1,w*0.4)*PICK_BAND_SCALE, normal); oldP.dispose();
+    }
   }
 });
 ui.wallOpacity.addEventListener('input', ()=>{
@@ -966,7 +1245,7 @@ ui.wallOpacity.addEventListener('input', ()=>{
   for(const it of items){ it.wallMesh.material.opacity=op; it.wallMesh.material.transparent = op<1; }
 });
 
-/* ==== 初期可視 ==== */
+/* 初期可視 */
 basis.visible=true; gridXY.visible=true; gridZX.visible=true;
 </script>
 </body>
