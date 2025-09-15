@@ -3,8 +3,14 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>3D天気図ビューアープラス</title>
+<title>3D天気図ビューアープラス（学校スタイル）</title>
 
+<!-- Google Fonts（丸ゴ） -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;600;800&display=swap" rel="stylesheet">
+
+<!-- three.js & addons via importmap -->
 <script type="importmap">
 {
   "imports": {
@@ -15,42 +21,169 @@
 </script>
 
 <style>
-  :root { --bg:#bfbfbf; --panel:#f8fafc; --muted:#6b7280; --border:#c8ced6; }
-  html,body{height:100%;margin:0;background:var(--bg);color:#0f172a;font-family:system-ui,-apple-system,Segoe UI,Roboto,"Hiragino Kaku Gothic ProN",Meiryo,sans-serif}
-  #app{display:grid;grid-template-columns:1fr 420px;grid-template-rows:56px 1fr;height:100%}
+  :root{
+    /* 学校版のやわらか配色 */
+    --bg1:#f0f7ff;        /* 背景グラデ1 */
+    --bg2:#e8fff6;        /* 背景グラデ2 */
+    --panel:#ffffff;      /* パネル背景 */
+    --muted:#64748b;      /* 説明文字 */
+    --border:#dbe3ee;     /* 罫線 */
+    --accent:#4f46e5;     /* アクセント（インディゴ） */
+    --accent-2:#06b6d4;   /* サブ（シアン） */
+    --chip: #f0f3ff;      /* チップ背景 */
+  }
+
+  /* 背景はやさしいグラデーション＋丸ゴ */
+  html,body{
+    height:100%; margin:0;
+    background: linear-gradient(145deg, var(--bg1), var(--bg2));
+    color:#2474c9;
+    font-family:'M PLUS Rounded 1c',"Hiragino Maru Gothic ProN","Yu Gothic",Meiryo,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    letter-spacing:.01em;
+  }
+
+  #app{display:grid;grid-template-columns:1fr 420px;grid-template-rows:auto 48px 1fr;height:100%}
   #app[data-panel="closed"]{grid-template-columns:1fr 0}
-  header{grid-column:1/-1;display:flex;align-items:center;gap:.6rem;padding:.5rem .9rem;border-bottom:1px solid var(--border);background:#f3f5f7;position:relative}
-  header h1{font-size:15px;margin:0}
+
+  /* ヘッダー */
+  header{
+    grid-column:1/-1;display:flex;align-items:center;gap:.7rem;
+    padding:.7rem 1rem;border-bottom:1px solid var(--border);
+    background: linear-gradient(90deg,#ffffffdd,#ffffffdd);
+    backdrop-filter: blur(6px);
+    position:sticky;
+    top: 0;
+    z-index: 1000;
+    }
+  header h1{font-size:18px;margin:0;font-weight:800;display:flex;align-items:center;gap:.5rem}
+  header h1::before{content:"🌤️"; font-size:20px}
   header .sp{flex:1}
-  header a{font-size:13px;color:#0b57d0;text-decoration:none}
+  header a{font-size:13px;color:var(--accent);text-decoration:none}
   header a:hover{text-decoration:underline}
-  header button,header label,header select{background:#fff;border:1px solid var(--border);color:#0f172a;padding:.45rem .7rem;border-radius:.5rem;cursor:pointer;font-size:13px}
+  header button,header label,header select{
+    background:#fff;border:1px solid var(--border);color:#0f172a;
+    padding:.5rem .75rem;border-radius:.75rem;cursor:pointer;font-size:14px;
+    box-shadow:0 2px 0 #0000000a; transition:transform .05s ease, box-shadow .2s ease, border-color .2s ease;
+  }
+  header button:hover, header select:hover{border-color:#c6d0e1}
+  header button:active{transform:translateY(1px)}
   header input[type=file]{display:none}
-  #viewer{position:relative;background:#fff}
+
+  /* 再生UI（ヘッダ内） */
+  .playbar{display:flex; align-items:center; gap:.55rem; margin-left:.4rem}
+  #playBtn{
+    width:44px;height:44px;border-radius:999px;
+    display:inline-grid;place-items:center;font-size:18px;
+  }
+  #playBtn[aria-pressed="true"]{ color:#fff; background:var(--accent); }
+  #playDelay{padding:.4rem .55rem; min-width:80px}
+
+  /* タブバー（もっと“タブらしく”） */
+  .tabs{
+    grid-column:1/-1;
+    display:flex; align-items:flex-end; gap:.35rem;
+    padding:0 .75rem; border-bottom:1px solid var(--border);
+    background:linear-gradient(0deg,#ffffffdd,#ffffffdd);
+    backdrop-filter: blur(6px);
+    position:relative; 
+    z-index: 10;
+  }
+  .tab{
+    position:relative;
+    background:#fff;
+    border:1px solid var(--border);
+    border-bottom:none;
+    padding:.5rem .9rem;
+    border-top-left-radius:.8rem; border-top-right-radius:.8rem;
+    color:#334155; font-weight:700; font-size:13px;
+    box-shadow:0 -2px 0 #00000008 inset, 0 6px 12px #0000000a;
+    transform: translateY(1px);
+  }
+  .tab::after{
+    content:""; position:absolute; left:-1px; right:-1px; bottom:-1px; height:1px; background:transparent;
+  }
+  .tab.active{
+    color:#111827;
+    box-shadow:0 -2px 0 #4f46e530 inset, 0 10px 18px #00000012;
+    border-color:#cfd9ea;
+  }
+  .tab .file-ico{margin-right:.4rem; opacity:.9}
+  .tab .close{
+    margin-left:.5rem; padding:.2rem .4rem; border-radius:.4rem;
+    background:#f8fafc; border:1px solid #e2e8f0; color:#64748b;
+    font-size:12px; font-weight:600; cursor:pointer;
+    transition:all .15s ease; min-width:20px; text-align:center;
+  }
+  .tab .close:hover{
+    background:#fef2f2; border-color:#fecaca; color:#dc2626;
+    transform:scale(1.05);
+  }
+  .tab .close:active{transform:scale(0.95)}
+  .tabs .sp{flex:1}
+
+  /* ビューア */
+  #viewer{position:relative;background:#fff;border-top:1px solid var(--border)}
   #c{width:100%;height:100%}
-  #overlay{position:absolute;left:12px;bottom:12px;padding:.45rem .6rem;background:#ffffffcc;border:1px solid var(--border);border-radius:.6rem;font-size:12px;color:#334155}
-  #dragHud{position:absolute;pointer-events:none;transform:translate(-50%,-130%);padding:.25rem .45rem;font-size:12px;border-radius:.4rem;background:#0009;color:#fff;border:1px solid #0003;display:none;white-space:nowrap}
-  #sidebar{background:var(--panel);border-left:1px solid var(--border);overflow:auto;padding:.8rem}
+  #overlay{
+    position:absolute;left:12px;bottom:12px;
+    padding:.55rem .7rem;background:#ffffffcc;border:1px solid var(--border);
+    border-radius:.8rem;font-size:13px;color:#334155;box-shadow:0 4px 20px #00000010;
+  }
+  #overlay::before{content:"🖱️ ";}
+
+  /* ドラッグHUD */
+  #dragHud{
+    position:absolute;pointer-events:none;transform:translate(-50%,-130%);
+    padding:.3rem .5rem;font-size:13px;border-radius:.5rem;background:#0009;color:#fff;border:1px solid #0003;display:none;white-space:nowrap
+  }
+
+  /* サイドバー */
+  #sidebar{
+    background:var(--panel);border-left:1px solid var(--border);overflow:auto;padding:1rem .9rem
+  }
   #app[data-panel="closed"] #sidebar{display:none}
   .section{margin-bottom:1rem}
-  .section h2{font-size:13px;margin:.3rem 0}
-  .row{display:grid;grid-template-columns:1fr auto;gap:.6rem;align-items:center;margin:.45rem 0}
-  .row label{font-size:12px;color:var(--muted)}
-  #list{display:grid;gap:.6rem}
-  .card{border:1px solid var(--border);background:#fff;border-radius:.6rem;padding:.6rem}
-  .card .t{display:flex;gap:.5rem;align-items:center;margin-bottom:.3rem}
-  .chip{display:inline-flex;align-items:center;gap:.4rem;border:1px solid var(--border);background:#f3f5f7;padding:.2rem .5rem;border-radius:999px;font-size:12px}
+  .section h2{font-size:14px;margin:.4rem 0 .2rem;font-weight:800;display:flex;align-items:center;gap:.4rem}
+  .section h2 .emo{opacity:.9}
+
+  .row{display:grid;grid-template-columns:1fr auto;gap:.7rem;align-items:center;margin:.5rem 0}
+  .row label{font-size:13px;color:var(--muted)}
+  #list{display:grid;gap:.7rem}
+
+  /* カード（やさしい角と色） */
+  .card{
+    border:1px solid var(--border);background:#fff;border-radius:1rem;padding:.7rem .7rem .6rem;
+    box-shadow:0 4px 14px #0000000a
+  }
+  .card .t{display:flex;gap:.6rem;align-items:center;margin-bottom:.35rem}
+  .chip{
+    display:inline-flex;align-items:center;gap:.4rem;border:1px solid var(--border);
+    background:var(--chip); padding:.25rem .55rem;border-radius:999px;font-size:12px;font-weight:700;color:#334155
+  }
   .small{font-size:12px}
   .muted{color:#6b7280;font-size:12px;margin-left:.4rem}
   canvas.grabbing{cursor:grabbing}
   canvas.hovering{cursor:ns-resize}
-  .menu{position:absolute; z-index:5; background:#fff; border:1px solid var(--border); border-radius:.5rem; box-shadow:0 8px 24px #0001; padding:.25rem; display:none; min-width:180px}
+
+  /* メニュー（開く/書き出し） */
+  .menu{position:absolute; z-index:10; background:#fff; border:1px solid var(--border); border-radius:.9rem; box-shadow:0 12px 32px #0002; padding:.35rem; display:none; min-width:200px}
   .menu.open{display:block}
-  .menu button{display:block; width:100%; text-align:left; padding:.5rem .7rem; border:none; background:transparent; border-radius:.4rem}
+  .menu button{display:block; width:100%; text-align:left; padding:.65rem .9rem; border:none; background:transparent; border-radius:.7rem; font-size:14px}
   .menu button:hover{background:#f1f5f9}
-  .menu .sep{height:1px; background:#e5e7eb; margin:.25rem 0}
-  /* ★★★ フォーカス強調 */
-  .card.focus-ring{outline:2px solid #0b57d0; box-shadow:0 0 0 3px #0b57d033}
+  .menu .sep{height:1px; background:#e5e7eb; margin:.25rem .25rem}
+  .card.focus-ring{outline:2px solid var(--accent); box-shadow:0 0 0 4px #4f46e530}
+
+  /* スライダーを少し太く・大きめに */
+  input[type=range]{width:220px}
+  input[type=range]::-webkit-slider-thumb{
+    appearance:none; width:18px;height:18px;border-radius:12px;background:var(--accent);
+    border:2px solid #fff; box-shadow:0 1px 3px #00000022; margin-top:-7px
+  }
+  input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:999px;background:linear-gradient(90deg,var(--accent),var(--accent-2))}
+  input[type=color]{width:36px;height:28px;border-radius:8px;border:1px solid var(--border);padding:0}
+
+  /* セレクトとボタンに絵文字 */
+  #openBtn::before{content:"📂 ";} #exportBtn::before{content:"💾 ";} #panelToggle::before{content:"🧰 ";}
 </style>
 </head>
 <body>
@@ -59,22 +192,35 @@
     <h1>3D天気図ビューアープラス</h1>
 
     <a href="https://www.data.jma.go.jp/yoho/wxchart/quickmonthly.html" target="_blank" rel="noopener noreferrer">
-      気象庁による過去の実況天気図
+      気象庁による「過去の実況天気図」
     </a>
 
     <span class="sp"></span>
 
-    <select id="projection">
+    <!-- 再生UI（ヘッダ内配置） -->
+    <div class="playbar" title="タブ自動巡回">
+      <button id="playBtn" aria-pressed="false" title="自動でタブを巡回">▶</button>
+      <select id="playDelay">
+        <option value="0.3">0.3秒</option>
+        <option value="0.5">0.5秒</option>
+        <option value="1" selected>1秒</option>
+        <option value="1.5">1.5秒</option>
+        <option value="2">2秒</option>
+      </select>
+    </div>
+
+    <select id="projection" title="カメラの投影法">
       <option value="persp" selected>透視図法</option>
       <option value="ortho">正射影図法</option>
     </select>
-    <select id="viewSelect">
+    <select id="viewSelect" title="見やすい向きに切り替え">
       <option value="all">斜め視点</option>
       <option value="top">真上（XY）</option>
       <option value="front">正面（ZX）</option>
       <option value="side">側面（ZY）</option>
     </select>
 
+    <!-- 開く（統合） -->
     <button id="openBtn">開く ▾</button>
     <input id="fileRaw" type="file" accept=".svg,.svgz,image/svg+xml,application/gzip">
     <input id="fileSaved" type="file" accept=".svg">
@@ -84,6 +230,7 @@
       <button data-act="open-saved">保存SVGを開く（本アプリ）</button>
     </div>
 
+    <!-- 書き出し（統合） -->
     <button id="exportBtn">書き出し ▾</button>
     <div id="exportMenu" class="menu">
       <button data-act="export-stl">STLを書き出し</button>
@@ -93,41 +240,44 @@
 
     <button id="panelToggle">パネル</button>
   </header>
+<!-- ▼追加：タブバー -->
+<div id="tabbar" class="tabs"></div>
 
   <div id="viewer">
     <canvas id="c"></canvas>
-    <div id="overlay">ドラッグ:回転 / 右ドラッグ:平行移動 / ホイール:ズーム / 線上ドラッグ:高さ変更（Shift=微 / Alt=粗）/ 手描きON: 視点と平行な原点平面に描画</div>
+    <div id="overlay">ドラッグで回転 / 右ドラッグで平行移動 / ホイールでズーム / 線をドラッグで高さ変更（Shift=ゆっくり / Alt=大きく）/ 手描きON: 視点と平行な原点平面に描画</div>
     <div id="dragHud"></div>
   </div>
 
   <aside id="sidebar">
     <div class="section">
-      <h2>全体設定</h2>
-      <div class="row"><label>背景色</label><input id="bgColor" type="color" value="#bfbfbf"></div>
-      <div class="row"><label>基準（軸＆キューブ）表示</label><input id="basisVisible" type="checkbox" checked></div>
-      <div class="row"><label>グリッド表示（XY/ZX）</label><input id="gridVisible" type="checkbox" checked></div>
+      <h2><span class="emo">⚙️</span> 全体設定</h2>
+      <div class="row"><label>背景色</label><input id="bgColor" type="color" value="#dff0ff"></div>
+      <div class="row"><label>基準（軸＆キューブ）</label><input id="basisVisible" type="checkbox" checked></div>
+      <div class="row"><label>グリッド（XY/ZX）</label><input id="gridVisible" type="checkbox" checked></div>
       <div class="row"><label>高さ倍率（Z）</label><input id="heightScale" type="range" min="0.1" max="20" step="0.1" value="5"></div>
-      <div class="row"><label>ドラッグ感度（px→高さ）</label><input id="dragSensitivity" type="range" min="0.05" max="2.0" step="0.05" value="0.3"></div>
-      <div class="row"><label>サンプリング密度（新規読込時）</label><input id="sample" type="range" min="32" max="1000" step="1" value="240"></div>
+      <div class="row"><label>ドラッグ感度</label><input id="dragSensitivity" type="range" min="0.05" max="2.0" step="0.05" value="0.3"></div>
+      <div class="row"><label>サンプリング密度（読み込み）</label><input id="sample" type="range" min="32" max="1000" step="1" value="240"></div>
     </div>
 
     <div class="section">
-      <h2>天気図画像（下敷き）</h2>
-      <div class="row"><label>表示</label><input id="imgVisible" type="checkbox" checked></div>
-      <div class="row"><label>不透明度</label><input id="imgOpacity" type="range" min="0" max="1" step="0.01" value="0.85"></div>
+      <h2><span class="emo">🗺️</span> 天気図画像（下敷き）</h2>
+      <div class="row"><label>表示する</label><input id="imgVisible" type="checkbox" checked></div>
+      <div class="row"><label>不透明度</label><input id="imgOpacity" type="range" min="0" max="1" step="0.01" value="0.9"></div>
       <div class="row"><label>高さ（Zオフセット）</label><input id="imgHeight" type="range" min="-200" max="200" step="0.1" value="-0.1"></div>
     </div>
 
     <div class="section">
-      <h2>自動高さ（ラベル順・色も連動）</h2>
-      <div class="row"><label>有効</label><input id="autoMode" type="checkbox"></div>
+      <h2><span class="emo">🤖</span> 自動高さ（ラベル順・色も連動）</h2>
+      <div class="row"><label>自動高さを使う</label><input id="autoMode" type="checkbox"></div>
       <div class="row"><label>間隔倍率</label><input id="gapFactor" type="range" min="0.2" max="3" step="0.05" value="1"></div>
       <div class="row"><label>平坦 ←→ 初期間隔</label><input id="autoBlend" type="range" min="0" max="1" step="0.01" value="1"></div>
       <div class="row"><span class="muted" id="labelInfo">ラベル未解析</span><span></span></div>
     </div>
 
+    <!-- 表示モード（パイプ/壁） -->
     <div class="section">
-      <h2>表示モード</h2>
+      <h2><span class="emo">🎛️</span> 表示モード</h2>
       <div class="row"><label>パイプ（Tube）</label><input id="modePipe" type="checkbox" checked></div>
       <div class="row"><label>壁（Wall：帯押し出し）</label><input id="modeWall" type="checkbox"></div>
       <div class="row"><label>パイプ直径</label><input id="pipeDia" type="range" min="0.2" max="12" step="0.1" value="6.0"></div>
@@ -136,8 +286,9 @@
       <div class="row"><span class="muted">※パイプ/壁は同時表示可。ドラッグは表示中の形状に有効。</span><span></span></div>
     </div>
 
+    <!-- 手書き3D描画 -->
     <div class="section">
-      <h2>手書き3D描画</h2>
+      <h2><span class="emo">✍️</span> 手書き3D描画</h2>
       <div class="row"><label>有効（描画モード）</label><input id="drawEnable" type="checkbox"></div>
       <div class="row">
         <label>形状</label>
@@ -154,7 +305,7 @@
     </div>
 
     <div class="section">
-      <h2>等圧線リスト</h2>
+      <h2><span class="emo">🧵</span> 等圧線リスト</h2>
       <div id="list"></div>
     </div>
   </aside>
@@ -211,7 +362,237 @@ const ui = {
   drawDiaOrWidth: document.getElementById('drawDiaOrWidth'),
   drawThickness: document.getElementById('drawThickness'),
   drawSampling: document.getElementById('drawSampling'),
+  playBtn: document.getElementById('playBtn'),
+  playDelay: document.getElementById('playDelay'),
 };
+/* ==== タブ管理 ==== */
+const tabbar = document.getElementById('tabbar');
+let tabs = [];           // {id,title,type,raw,only,project, cam:{pos,target,ortho?}, items:[]}
+let activeTabId = null;
+let _tabSeq = 0;
+// ▼追加（グローバル）
+let suppressFit = false;
+let suppressStateSave = false;
+
+function maybeFit(){
+  if(!suppressFit) fitView(chartGroup);
+}
+function captureCamera(){
+  return {
+    pos: camera.position.toArray(),
+    target: controls.target.toArray(),
+    ortho: camera.isOrthographicCamera
+  };
+}
+function captureItemsState(){
+  return items.map(item => ({
+    id: itemSignature(item),                   // ← 署名も保存
+    height: item.height,
+    userColor: item.userColor,
+    visible: item.ui?.vis?.checked ?? true
+  }));
+}
+function restoreItemsState(itemsState){
+  if(!itemsState || !items.length) return;
+
+  // id -> state
+  const map = new Map(itemsState.map(s => [s.id, s]));
+
+  for(const it of items){
+    const st = map.get(itemSignature(it));
+    if(!st) continue;
+    it.height    = st.height ?? 0;
+    it.userColor = st.userColor ?? null;
+    if(it.ui?.vis) it.ui.vis.checked = (st.visible ?? true);
+  }
+
+  updateHeightsAndColors();
+  applyModeVisibility();
+}
+
+function syncItemUIs(){
+  for(const it of items){
+    if (it.ui?.slider) it.ui.slider.value = it.height;
+    if (it.ui?.num)    it.ui.num.value    = it.height.toFixed(2);
+    if (it.ui?.vis)    it.ui.vis.checked  = (it.ui?.vis?.checked ?? true);
+    if (it.ui?.color)  it.ui.color.value  =
+      it.userColor ? it.userColor : `#${it.pipeMesh.material.color.getHexString()}`;
+  }
+}
+function restoreCamera(cam){
+  if(!cam) return;
+  if(cam.ortho) useOrthographic(); else usePerspective();
+  camera.position.fromArray(cam.pos);
+  controls.target.fromArray(cam.target);
+  controls.update();
+  resize();
+}
+
+function renderTabbar(){
+  tabbar.innerHTML = '';
+  for(const t of tabs){
+    const el = document.createElement('div');
+    el.className = 'tab' + (t.id===activeTabId ? ' active' : '');
+    el.innerHTML = `<span class="name">${t.title}</span><button class="close" title="閉じる">🗑️</button>`;
+    el.querySelector('.name').onclick = ()=> activateTab(t.id);
+    el.querySelector('.close').onclick = (e)=>{ e.stopPropagation(); closeTab(t.id); };
+    tabbar.appendChild(el);
+  }
+  // 再生中なら、タブ構成が変わったときも巡回を継続
+  if(play.on) scheduleNext();
+}
+function saveActiveTabState(){
+  const t = tabs.find(x => x.id === activeTabId);
+  if (t) {
+    t.itemsState = captureItemsState();
+    t.cam = captureCamera();
+  }
+}
+async function activateTab(id){
+  const t = tabs.find(x=>x.id===id); if(!t) return;
+
+  // 現在タブの保存（既存）
+  const cur = tabs.find(x=>x.id===activeTabId);
+  if(cur){ cur.cam = captureCamera(); cur.itemsState = captureItemsState(); }
+
+  activeTabId = id;
+  renderTabbar();
+
+  suppressFit = true;
+  suppressStateSave = true; 
+  try{
+    // ★UIを見た目としても同期したい場合はここで値を反映（任意）
+    if(t.params){
+      ui.sample.value     = t.params.sampleN;
+      ui.pipeDia.value    = t.params.pipeDia;
+      ui.wallThick.value  = t.params.wallThick;
+      ui.wallOpacity.value= t.params.wallOpacity;
+    }
+
+    if(t.type==='project'){
+      await loadProjectSVG(t.project);
+    }else if(t.type==='raw'){
+      lastRawSvgText = t.rawBg;
+      lastSvgDims    = t.svgDims;
+      await buildOrUpdateWeatherPlane(lastRawSvgText);
+      // ★ここ：タブ固有パラメータを渡す
+      const hasState = Array.isArray(t.itemsState) && t.itemsState.length;
+      await loadSVGFromString(t.only, {...(t.params||{}), suppressAuto: hasState});
+    }
+  }catch(err){ console.error('タブ切替エラー', err); }
+  finally{
+    suppressFit = false;
+  }
+
+  // 状態復元（既存）
+  if(t.itemsState){
+    restoreItemsState(t.itemsState);
+    syncItemUIs();
+  }
+  suppressStateSave = false;
+  saveActiveTabState(); 
+  if(!play.on){
+    if(t.cam) restoreCamera(t.cam);
+    else      maybeFit();
+  }
+  if(play.on) scheduleNext();
+}
+
+function closeTab(id){
+  const i = tabs.findIndex(x=>x.id===id);
+  if(i<0) return;
+  tabs.splice(i,1);
+  if(!tabs.length){
+    // 何も無くなったら空表示
+    rootLines.clear(); items=[]; ui.list.innerHTML='';
+    weatherPlane?.parent?.remove(weatherPlane); weatherPlane=null;
+    activeTabId=null;
+    renderTabbar();
+    return;
+  }
+  // 直前 or 先頭をアクティブ
+  const next = tabs[Math.max(0, i-1)].id;
+  activateTab(next);
+  if(play.on) scheduleNext();
+}
+
+function addTabFromRaw(filename, rawSvgText, onlyIsobars, svgDims){
+  const id = ++_tabSeq;
+  tabs.push({
+    id,
+    title: filename || '無題.svg',
+    type: 'raw',
+    rawBg: new XMLSerializer().serializeToString(
+      new DOMParser().parseFromString(rawSvgText,'image/svg+xml').documentElement
+    ),
+    only: onlyIsobars,
+    svgDims,
+    cam: captureCamera(),
+    itemsState: null,
+    // ★ここ
+    params: {
+      sampleN: parseInt(ui.sample.value,10),
+      pipeDia: parseFloat(ui.pipeDia.value),
+      wallThick: parseFloat(ui.wallThick.value),
+      wallOpacity: parseFloat(ui.wallOpacity.value),
+    }
+  });
+  activateTab(id);
+}
+function addTabFromProject(filename, projectText){
+  const id = ++_tabSeq;
+  tabs.push({
+    id,
+    title: filename || '保存データ',
+    type:'project',
+    project: projectText,
+    cam: captureCamera(),
+    itemsState: null,
+    // ★保存SVGは 3D形状が埋め込まれているが、再構築時の保険として保持
+    params: {
+      sampleN: parseInt(ui.sample.value,10),
+      pipeDia: parseFloat(ui.pipeDia.value),
+      wallThick: parseFloat(ui.wallThick.value),
+      wallOpacity: parseFloat(ui.wallOpacity.value),
+    }
+  });
+  activateTab(id);
+}
+
+/* ==== 再生（タブ巡回） ==== */
+const play = {
+  on: false,
+  timer: null,
+  btn: document.getElementById('playBtn'),
+  delay: document.getElementById('playDelay'),
+};
+
+function getIntervalMs(){
+  const delay = parseFloat(play.delay.value || '1');   // 秒
+  return Math.max(200, delay * 1000);
+}
+function scheduleNext(){
+  clearTimeout(play.timer);
+  if(!play.on || tabs.length <= 1) return;
+  play.timer = setTimeout(()=>{
+    // 次のタブへ
+    const idx = tabs.findIndex(t=>t.id===activeTabId);
+    const next = tabs[(idx+1) % tabs.length];
+    activateTab(next.id);
+    scheduleNext();
+  }, getIntervalMs());
+}
+function setPlaying(state){
+  play.on = !!state;
+  play.btn.setAttribute('aria-pressed', play.on ? 'true' : 'false');
+  play.btn.textContent = play.on ? '⏸' : '▶';
+  clearTimeout(play.timer);
+  if(play.on) scheduleNext();
+}
+
+// UIイベント
+play.btn.addEventListener('click', ()=> setPlaying(!play.on));
+play.delay.addEventListener('change', ()=>{ if(play.on) scheduleNext(); });
 
 /* ==== renderer / scene ==== */
 const renderer = new THREE.WebGLRenderer({canvas: ui.canvas, antialias:true});
@@ -252,19 +633,19 @@ let _target = new THREE.Vector3();
 camera = perspCamera; makeControls(camera);
 
 /* ==== lights / grid / basis ==== */
-scene.add(new THREE.AmbientLight(0xffffff,0.55));
-const dl=new THREE.DirectionalLight(0xffffff,0.9); dl.position.set(400,300,500); scene.add(dl);
-const gridXY=new THREE.GridHelper(1000,100,0xffffff,0xffffff); gridXY.rotation.x=Math.PI/2; scene.add(gridXY);
-const gridZX=new THREE.GridHelper(1000,100,0xffffff,0xffffff); gridZX.material.opacity=.5; gridZX.material.transparent=true; scene.add(gridZX);
+scene.add(new THREE.AmbientLight(0xffffff,0.6));
+const dl=new THREE.DirectionalLight(0xffffff,0.95); dl.position.set(400,300,500); scene.add(dl);
+const gridXY=new THREE.GridHelper(1000,100,0xffffff,0xffffff); gridXY.rotation.x=Math.PI/2; gridXY.material.opacity=.6; gridXY.material.transparent=true; scene.add(gridXY);
+const gridZX=new THREE.GridHelper(1000,100,0xffffff,0xffffff); gridZX.material.opacity=.35; gridZX.material.transparent=true; scene.add(gridZX);
 
 const basis=new THREE.Group();
-basis.add(new THREE.ArrowHelper(new THREE.Vector3(1,0,0),new THREE.Vector3(),300,0xff0000,50,20));
-basis.add(new THREE.ArrowHelper(new THREE.Vector3(0,1,0),new THREE.Vector3(),300,0x00ff00,50,20));
-basis.add(new THREE.ArrowHelper(new THREE.Vector3(0,0,1),new THREE.Vector3(),300,0x0000ff,50,20));
+basis.add(new THREE.ArrowHelper(new THREE.Vector3(1,0,0),new THREE.Vector3(),300,0xff5f5f,50,20));
+basis.add(new THREE.ArrowHelper(new THREE.Vector3(0,1,0),new THREE.Vector3(),300,0x14b8a6,50,20));
+basis.add(new THREE.ArrowHelper(new THREE.Vector3(0,0,1),new THREE.Vector3(),300,0x60a5fa,50,20));
 const fontLoader=new FontLoader();
 fontLoader.load('https://threejs.org/examples/fonts/helvetiker_regular.typeface.json',(font)=>{
   const mk=(ch,col,pos)=>{
-    const g=new TextGeometry(ch,{font,size:40,height:5});
+    const g=new TextGeometry(ch,{font,size:42,height:5});
     g.computeBoundingBox();
     const m=new THREE.MeshBasicMaterial({color:col});
     const mesh=new THREE.Mesh(g,m);
@@ -272,15 +653,15 @@ fontLoader.load('https://threejs.org/examples/fonts/helvetiker_regular.typeface.
     mesh.position.set(pos.x-w/2,pos.y,pos.z);
     basis.add(mesh);
   };
-  mk('X',0xff0000,{x:320,y:-20,z:0}); mk('Y',0x00ff00,{x:0,y:320,z:0}); mk('Z',0x0000ff,{x:0,y:-20,z:320});
+  mk('X',0xff5f5f,{x:320,y:-20,z:0}); mk('Y',0x14b8a6,{x:0,y:320,z:0}); mk('Z',0x60a5fa,{x:0,y:-20,z:320});
 });
 const cube=new THREE.Mesh(new THREE.BoxGeometry(60,60,60),[
-  new THREE.MeshStandardMaterial({color:0xff0000,roughness:.4,metalness:.1}),
-  new THREE.MeshStandardMaterial({color:0xff0000,roughness:.4,metalness:.1}),
-  new THREE.MeshStandardMaterial({color:0x00ff00,roughness:.4,metalness:.1}),
-  new THREE.MeshStandardMaterial({color:0x00ff00,roughness:.4,metalness:.1}),
-  new THREE.MeshStandardMaterial({color:0x0000ff,roughness:.4,metalness:.1}),
-  new THREE.MeshStandardMaterial({color:0x0000ff,roughness:.4,metalness:.1}),
+  new THREE.MeshStandardMaterial({color:0xff5f5f,roughness:.35,metalness:.1}),
+  new THREE.MeshStandardMaterial({color:0xff5f5f,roughness:.35,metalness:.1}),
+  new THREE.MeshStandardMaterial({color:0x14b8a6,roughness:.35,metalness:.1}),
+  new THREE.MeshStandardMaterial({color:0x14b8a6,roughness:.35,metalness:.1}),
+  new THREE.MeshStandardMaterial({color:0x60a5fa,roughness:.35,metalness:.1}),
+  new THREE.MeshStandardMaterial({color:0x60a5fa,roughness:.35,metalness:.1}),
 ]); cube.position.set(0,0,30); basis.add(cube); scene.add(basis);
 
 /* ==== containers ==== */
@@ -296,7 +677,7 @@ const rootLines=new THREE.Group(); chartGroup.add(rootLines);
 */
 let items=[];
 let weatherPlane=null, lastSvgDims=null, lastRawSvgText="";
-let linesOffset = new THREE.Vector3(0,0,0); /* ★★★ centering オフセット */
+let linesOffset = new THREE.Vector3(0,0,0);
 
 /* ==== render loop / resize ==== */
 function resize(){
@@ -306,7 +687,10 @@ function resize(){
   else setOrthoFrustum();
 }
 addEventListener('resize',resize); resize();
-(function anim(){ requestAnimationFrame(anim); controls.update(); renderer.render(scene,camera); })();
+(function anim(){
+  requestAnimationFrame(anim);
+  controls.update(); renderer.render(scene,camera);
+})();
 
 /* ==== views ==== */
 function fitView(target=chartGroup){
@@ -314,7 +698,7 @@ function fitView(target=chartGroup){
   b.getSize(sz); b.getCenter(cen); if(!(isFinite(sz.x)&&isFinite(sz.y))) return;
   _target.copy(cen);
   if(camera.isPerspectiveCamera){
-    const maxDim=Math.max(sz.x,sz.y,sz.z); /* ★ 修正: s→sz */
+    const maxDim=Math.max(sz.x,sz.y,sz.z);
     const dist=maxDim*1.2/Math.tan(THREE.MathUtils.degToRad(perspCamera.fov*0.5));
     const dir=new THREE.Vector3(.75,.55,.35).normalize();
     camera.position.copy(cen.clone().add(dir.multiplyScalar(dist)));
@@ -330,7 +714,7 @@ function viewFront(){ const b=new THREE.Box3().setFromObject(chartGroup),c=new T
 function viewSide(){ const b=new THREE.Box3().setFromObject(chartGroup),c=new THREE.Vector3(),s=new THREE.Vector3(); b.getCenter(c); b.getSize(s); const dist=Math.max(s.x,s.y,s.z)*2+1; camera.position.set(c.x+dist,c.y,c.z); _target.copy(c); controls.target.copy(c); controls.update(); if(!camera.isPerspectiveCamera) setOrthoFrustum(); }
 
 /* ==== helpers ==== */
-function colorFromHeight(h,maxH){ if(maxH<=0 || h<=0) return new THREE.Color(0xff0000); const t=Math.min(Math.max(h/maxH,0),1); const c=new THREE.Color(); c.setHSL((2/3)*t,1,0.5); return c; }
+function colorFromHeight(h,maxH){ if(maxH<=0 || h<=0) return new THREE.Color(0xff0000); const t=Math.min(Math.max(h/maxH,0),1); const c=new THREE.Color(); c.setHSL((2/3)*t,1,0.55); return c; }
 function currentMaxHeightStrict(){ if(!items.length) return 0; let m=0; for(const it of items) if(it.height>m) m=it.height; return m; }
 
 /* ==== geometry ==== */
@@ -386,7 +770,6 @@ function buildWallRibbonGeometry(points, width, miterEps=0.25){
   g.computeVertexNormals();
   return g;
 }
-/* 視点平面用の帯 */
 function buildRectBandOnPlane(points3, width, thickness, planeNormal){
   const n = points3.length; if(n<2) return new THREE.BoxGeometry(0,0,0);
   const halfW = width*0.5, halfT = Math.max(0.0001, thickness*0.5);
@@ -431,6 +814,30 @@ function buildRectBandOnPlane(points3, width, thickness, planeNormal){
   g.setIndex(indices);
   g.computeVertexNormals();
   return g;
+}
+function itemSignature(it){
+  const n = it.path2D?.length || 0;
+  if(n < 2) return `${it.kind || 'svg'}:${n}`;
+
+  const p0 = it.path2D[0];
+  const pn = it.path2D[n - 1];
+
+  // 始点・終点を方向非依存に正規化（辞書順で小→大）
+  const a = [Math.round(p0.x), Math.round(p0.y)];
+  const b = [Math.round(pn.x), Math.round(pn.y)];
+  const [s0, s1] = (a[0] < b[0] || (a[0] === b[0] && a[1] <= b[1])) ? [a, b] : [b, a];
+
+  // 署名の安定度を上げるために重心も入れる
+  const cx = Math.round(it.centroid?.x || 0);
+  const cy = Math.round(it.centroid?.y || 0);
+
+  return [
+    it.kind || 'svg',
+    n,
+    s0[0], s0[1],
+    s1[0], s1[1],
+    cx, cy
+  ].join(':');
 }
 
 /* ==== 背景SVG ==== */
@@ -490,16 +897,19 @@ function applyImageUI(){
 function centroidXY(pts){ let sx=0,sy=0; for(const p of pts){sx+=p.x;sy+=p.y;} const n=pts.length||1; return {x:sx/n,y:sy/n}; }
 function polygonArea(pts){ let a=0; for(let i=0;i<pts.length;i++){ const p=pts[i], q=pts[(i+1)%pts.length]; a += p.x*q.y - q.x*p.y; } return Math.abs(a)/2; }
 
-async function loadSVGFromString(svgText){
+async function loadSVGFromString(svgText, opts = {}){
   rootLines.clear(); items=[]; ui.list.innerHTML='';
+
   const loader=new SVGLoader(); let data;
   try{ data=loader.parse(svgText); }catch(e){ console.error('SVG parse 失敗',e); return; }
 
   const linesGroup=new THREE.Group();
-  const sampleN=parseInt(ui.sample.value,10);
-  const radius=parseFloat(ui.pipeDia.value)/2;
-  const bandW =parseFloat(ui.wallThick.value);
-  const wallOp=parseFloat(ui.wallOpacity.value);
+  // ★ここ：UIではなく opts から読む。なければ現在値をフォールバック
+  const sampleN = Number.isFinite(opts.sampleN) ? opts.sampleN : parseInt(ui.sample.value,10);
+  const radius  = ((Number.isFinite(opts.pipeDia) ? opts.pipeDia : parseFloat(ui.pipeDia.value)))/2;
+  const bandW   = Number.isFinite(opts.wallThick) ? opts.wallThick : parseFloat(ui.wallThick.value);
+  const wallOp  = Number.isFinite(opts.wallOpacity)? opts.wallOpacity: parseFloat(ui.wallOpacity.value);
+
 
   for(const p of data.paths){
     const style=p.userData?.style||{}; const stroke=(style.stroke && style.stroke!=='none')?style.stroke:"#9aa4b2";
@@ -535,16 +945,16 @@ async function loadSVGFromString(svgText){
   box.getCenter(cen3); box.getSize(sz);
   linesGroup.position.set(-cen3.x, -cen3.y, 0);
   rootLines.add(linesGroup);
-  linesOffset.copy(linesGroup.position); /* ★★★ */
+  linesOffset.copy(linesGroup.position);
 
   const scale=600/Math.max(sz.x,sz.y); chartGroup.scale.setScalar(isFinite(scale)&&scale>0?scale:1);
 
   await assignPressuresFromLabelsOrAreas();
   applyModeVisibility();
-  if (ui.autoMode.checked) applyAutoHeights();
+  if (ui.autoMode.checked && !opts.suppressAuto) applyAutoHeights();
   buildList(true);
   updateHeightsAndColors();
-  fitView(chartGroup);
+  maybeFit();
 }
 
 /* ==== ラベル推定 ==== */
@@ -593,10 +1003,6 @@ function applyAutoHeights(){
   for(const it of items){ it.height=(it.autoTarget||0)*blend; }
   updateHeightsAndColors();
 }
-/* ★★★ 色反映のルール
-   - userColor がある場合はそれを優先（手描きや手動色）
-   - それ以外は高さベースの自動色
-*/
 function updateHeightsAndColors(){
   const s=parseFloat(ui.heightScale.value);
   const maxH=currentMaxHeightStrict();
@@ -623,6 +1029,12 @@ function updateHeightsAndColors(){
     it.wallMesh.material.color.copy(col);
     if(it.ui?.color) it.ui.color.value = `#${col.getHexString()}`;
   }
+  
+   // ここで1回だけ、必要なときだけ保存
+ if (!suppressStateSave) {
+   const t = tabs.find(t => t.id === activeTabId);
+   if (t) t.itemsState = captureItemsState();
+ }
 }
 function applyModeVisibility(){
   const showPipe=ui.modePipe.checked;
@@ -638,7 +1050,7 @@ function applyModeVisibility(){
   }
 }
 
-/* ★★★ パネルのカードをフォーカス＆スクロール */
+/* フォーカススクロール */
 function focusPanelCardForItem(it){
   const el = it?.ui?.card;
   if(!el) return;
@@ -646,7 +1058,7 @@ function focusPanelCardForItem(it){
   el.setAttribute('tabindex','-1');
   el.focus({preventScroll:true});
   el.scrollIntoView({block:'nearest', behavior:'smooth'});
-  setTimeout(()=>el.classList.remove('focus-ring'), 800);
+  setTimeout(()=>el.classList.remove('focus-ring'), 900);
 }
 
 function buildList(orderByPressure=false){
@@ -660,43 +1072,97 @@ function buildList(orderByPressure=false){
     });
   }
   let i=0;
-  for(const it of arr){
-    const card=document.createElement('div'); card.className='card';
-    const t=document.createElement('div'); t.className='t';
-    const c=document.createElement('span'); c.className='chip'; c.textContent=`L${(++i).toString().padStart(3,'0')}`;
-    const vis=document.createElement('input'); vis.type='checkbox'; vis.checked=true; vis.title='表示/非表示'; vis.onchange=()=>{ applyModeVisibility(); };
-    const color=document.createElement('input'); color.type='color';
-    /* ★★★ 手描きは色変更OK、SVGは自動色なのでUIは無効 */
-    color.disabled = (it.kind==='svg');
-    const tag=document.createElement('span'); tag.className='small muted'; tag.textContent=(it.kind==='svg')?(isFinite(it.pressure)?`P=${it.pressure}`:`P=?`):(it.kind==='drawRect'?'手描き帯':'手描きチューブ');
-    t.append(c, vis, color, tag); card.appendChild(t);
+  for (const it of arr) {
+  const card = document.createElement('div');
+  card.className = 'card';
 
-    const row1=document.createElement('div'); row1.className='row';
-    const lab=document.createElement('label'); lab.textContent='高さ（Z）';
-    const slider=document.createElement('input'); slider.type='range'; slider.min=-2000; slider.max=2000; slider.step=0.1; slider.value=it.height;
-    slider.oninput=()=>{ it.height=parseFloat(slider.value); if(it.ui?.num) it.ui.num.value=it.height.toFixed(2); updateHeightsAndColors(); };
-    row1.append(lab,slider); card.appendChild(row1);
+  const t = document.createElement('div');
+  t.className = 't';
 
-    const row2=document.createElement('div'); row2.className='row';
-    const hint=document.createElement('span'); hint.className='small'; hint.textContent='（手動でも調整可）';
-    const num=document.createElement('input'); num.type='number'; num.className='small'; num.step=0.1; num.style.width='100px'; num.value=it.height.toFixed(2);
-    num.onchange=()=>{ const v=parseFloat(num.value)||0; it.height=v; slider.value=v; updateHeightsAndColors(); };
-    row2.append(hint,num); card.appendChild(row2);
+  const c = document.createElement('span');
+  c.className = 'chip';
+  c.textContent = `L${(++i).toString().padStart(3,'0')}`;
 
-    /* ★★★ 色UIの初期値＆イベント */
-    const initCol = it.userColor ? it.userColor : `#${it.pipeMesh.material.color.getHexString()}`;
-    color.value = initCol;
-    color.oninput = ()=>{
-      const v = color.value;
-      it.userColor = v; // 手動色として固定
-      it.pipeMesh.material.color.set(v);
-      it.wallMesh.material.color.set(v);
-    };
+  // 表示チェック
+  const vis = document.createElement('input');
+  vis.type = 'checkbox';
+  vis.checked = (it.ui?.vis?.checked ?? true);
+  vis.title = '表示/非表示';
+  vis.onchange = () => {
+    applyModeVisibility();
+    saveActiveTabState();    // ← 状態を保存
+  };
 
-    it.ui={slider,num,color,vis,card};
-    ui.list.appendChild(card);
-  }
-  applyModeVisibility();
+  // 色入力
+  const color = document.createElement('input');
+  color.type = 'color';
+  color.disabled = (it.kind === 'svg'); // SVGは自動色
+  const initCol = it.userColor ? it.userColor
+                               : `#${it.pipeMesh.material.color.getHexString()}`;
+  color.value = initCol;
+  color.oninput = () => {
+    const v = color.value;
+    it.userColor = v;
+    it.pipeMesh.material.color.set(v);
+    it.wallMesh.material.color.set(v);
+    saveActiveTabState();    // ← 状態を保存
+  };
+
+  // タグ
+  const tag = document.createElement('span');
+  tag.className = 'small muted';
+  tag.textContent = (it.kind === 'svg')
+    ? (isFinite(it.pressure) ? `P=${it.pressure}` : `P=?`)
+    : (it.kind === 'drawRect' ? '手描き帯' : '手描きチューブ');
+
+  t.append(c, vis, color, tag);
+  card.appendChild(t);
+
+  // スライダー
+  const row1 = document.createElement('div');
+  row1.className = 'row';
+  const lab = document.createElement('label');
+  lab.textContent = '高さ（Z）';
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.min = -2000; slider.max = 2000; slider.step = 0.1;
+  slider.value = it.height;
+  slider.oninput = () => {
+    it.height = parseFloat(slider.value);
+    if (it.ui?.num) it.ui.num.value = it.height.toFixed(2);
+    updateHeightsAndColors();
+  };
+  row1.append(lab, slider);
+  card.appendChild(row1);
+
+  // 数値入力
+  const row2 = document.createElement('div');
+  row2.className = 'row';
+  const hint = document.createElement('span');
+  hint.className = 'small';
+  hint.textContent = '数字でも調整できます';
+  const num = document.createElement('input');
+  num.type = 'number';
+  num.className = 'small';
+  num.step = 0.1;
+  num.style.width = '110px';
+  num.value = it.height.toFixed(2);
+  num.onchange = () => {
+    const v = parseFloat(num.value) || 0;
+    it.height = v;
+    slider.value = v;
+    updateHeightsAndColors();
+  };
+  row2.append(hint, num);
+  card.appendChild(row2);
+
+  // UI参照を保存
+  it.ui = { slider, num, color, vis, card };
+  ui.list.appendChild(card);
+}
+
+applyModeVisibility();
+
 }
 
 /* ==== ピック & ドラッグ ==== */
@@ -723,6 +1189,7 @@ function updateHudByClientXY(clientX, clientY, h){
   ui.dragHud.textContent=`Z = ${h.toFixed(2)}`;
 }
 
+/* ==== 手描き ==== */
 const drawState = { enabled:false, drawing:false, pts:[], tempMesh:null, tempPick:null, plane:new THREE.Plane(new THREE.Vector3(0,0,1),0) };
 function updateDrawPlaneFromCamera(){
   const n = new THREE.Vector3();
@@ -826,6 +1293,9 @@ function commitTempToItem(){
     ui.modeWall.checked = true;
   }
   applyModeVisibility();
+  const currentTab = tabs.find(t => t.id === activeTabId);
+if (currentTab) currentTab.itemsState = captureItemsState();
+
 }
 
 /* ==== Pointer ==== */
@@ -851,7 +1321,6 @@ ui.canvas.addEventListener('pointerdown',(e)=>{
     controls.enabled = false;
     ui.canvas.classList.add('grabbing');
     ui.dragHud.style.display='block';
-    /* ★★★ ドラッグ開始でカードをフォーカス */
     focusPanelCardForItem(draggingItem);
     updateHudByClientXY(e.clientX, e.clientY, draggingItem.height);
     ui.canvas.setPointerCapture(e.pointerId);
@@ -981,7 +1450,7 @@ function buildProjectSVG(){
   const iso = doc.createElementNS("http://www.w3.org/2000/svg","g");
   iso.setAttribute("id","isobars3d");
   iso.setAttribute("data-app","3disobarsplus");
-  iso.setAttribute("data-version","5"); /* ★ version up */
+  iso.setAttribute("data-version","6");
   for(const it of items){
     const ptsCanon3 = getCanonicalPts3(it);
     const pts2 = canonical3Dto2D(ptsCanon3);
@@ -996,7 +1465,7 @@ function buildProjectSVG(){
     poly.setAttribute("data-visible", (it.ui?.vis?.checked ?? true) ? "1":"0");
     poly.setAttribute("data-kind", it.kind||'svg');
     poly.setAttribute("data-wall-extruded", it.wallExtrudedZ? "1":"0");
-    poly.setAttribute("data-usercolor", it.userColor ? "1":"0"); /* ★★★ 手動色フラグ */
+    poly.setAttribute("data-usercolor", it.userColor ? "1":"0");
     iso.appendChild(poly);
   }
   svg.appendChild(iso);
@@ -1086,9 +1555,8 @@ async function loadProjectSVG(svgText){
     const stroke = poly.getAttribute('stroke') || '#9aa4b2';
     const visible = poly.getAttribute('data-visible')!=="0";
     const wallExtrudedZ = poly.getAttribute('data-wall-extruded')==="1";
-    const userColorFlag = poly.getAttribute('data-usercolor'); /* ★★★ */
+    const userColorFlag = poly.getAttribute('data-usercolor');
 
-    /* ★★★ ここで正規化済みの pts3 を linesGroup ローカルとして使う */
     const pathPoints = (pts3.length? pts3 : pts2.map(p=>new THREE.Vector3(p.x, -p.y, 0)));
 
     let pipeMesh, wallMesh, pickPipeMesh, pickWallMesh, wallExZ;
@@ -1115,38 +1583,38 @@ async function loadProjectSVG(svgText){
       pickPipeMesh = new THREE.Mesh(buildTubeGeometry(pathPoints, radius * PICK_TUBE_SCALE), new THREE.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0.001, depthWrite:false}));
     }
 
-    /* ★★★ userColor の扱い：
-       - data-usercolor="1" または kind != 'svg'（後方互換）なら userColor=stroke（手動色/手描き色）
-       - それ以外（SVG 等圧線）は null にして自動色へ
-    */
     const userColor =
       (userColorFlag === '1') ? stroke :
       (kind !== 'svg' && userColorFlag !== '0') ? stroke : null;
-
+    const cen = pts2.length ? centroidXY(pts2) : centroidXY(canonical3Dto2D(pathPoints));
     const it = {
       pipeMesh, wallMesh, pickPipeMesh, pickWallMesh,
       activeMesh:null, activePick:null,
       pathPoints, path2D: pts2,
-      height, ui:{}, centroid:{x:0,y:0}, pressure:undefined, area:0, autoTarget:0,
+      height, ui:{}, centroid: cen, pressure:undefined, area:0, autoTarget:0,
       userColor, wallExtrudedZ: (wallExZ ?? wallExtrudedZ), kind
     };
     items.push(it);
     linesGroup.add(pipeMesh, wallMesh, pickPipeMesh, pickWallMesh);
     it.ui.vis = {checked:visible};
+    pipeMesh.visible = visible && ui.modePipe.checked;
+    wallMesh.visible = visible && ui.modeWall.checked;
+    pickPipeMesh.visible = visible && ui.modePipe.checked;
+    pickWallMesh.visible = visible && ui.modeWall.checked;
   }
 
   const box=new THREE.Box3().setFromObject(linesGroup); const cen3=new THREE.Vector3(), sz=new THREE.Vector3();
   box.getCenter(cen3); box.getSize(sz);
   linesGroup.position.set(-cen3.x, -cen3.y, 0);
   rootLines.add(linesGroup);
-  linesOffset.copy(linesGroup.position); /* ★★★ */
+  linesOffset.copy(linesGroup.position);
 
   const scale=600/Math.max(sz.x,sz.y); chartGroup.scale.setScalar(isFinite(scale)&&scale>0?scale:1);
 
   buildList(true);
-  updateHeightsAndColors(); /* ★★★ 読み込み直後に高さ→色の自動反映 */
+  updateHeightsAndColors();
   applyModeVisibility();
-  fitView(chartGroup);
+  maybeFit();
 }
 
 /* ==== メニュー ==== */
@@ -1178,7 +1646,7 @@ ui.exportMenu.addEventListener('click', (e)=>{
   if(act==='save-svg')  doSaveSVG();
 });
 
-/* ==== 入出力イベント ==== */
+// SVG/SVGZ を開く
 ui.fileRaw.addEventListener('change', async (e)=>{
   const f=e.target.files?.[0]; if(!f) return;
   try{
@@ -1194,13 +1662,24 @@ ui.fileRaw.addEventListener('change', async (e)=>{
     const only=extractIsobarsOnly(raw);
     await loadSVGFromString(only);
     fitView(chartGroup);
+
+    // ▼ここを追加：タブを作る（タブ名はファイル名）
+    addTabFromRaw(f.name, lastRawSvgText, only, lastSvgDims);
+
   }catch(err){ console.error('読み込みエラー',err); }
 });
+
+// 保存SVG（本アプリ）を開く
 ui.fileSaved.addEventListener('change', async (e)=>{
   const f = e.target.files?.[0]; if(!f) return;
   const text = await f.text();
   await loadProjectSVG(text);
+  fitView(chartGroup);
+
+  // ▼ここを追加：タブを作る（タブ名はファイル名）
+  addTabFromProject(f.name, text);
 });
+
 
 /* ==== その他UI ==== */
 ui.bgColor.addEventListener('input', e=>{ scene.background=new THREE.Color(e.target.value); });
@@ -1215,7 +1694,9 @@ ui.autoMode.addEventListener('change', ()=>{
   else { for(const it of items){ it.height=0; if(it.ui?.slider) it.ui.slider.value=0; if(it.ui?.num) it.ui.num.value='0.00'; } updateHeightsAndColors(); }
 });
 ui.gapFactor.addEventListener('input', ()=>{ if(ui.autoMode.checked) applyAutoHeights(); });
-ui.autoBlend.addEventListener('input', ()=>{ if(ui.autoMode.checked) applyAutoHeights(); });
+ui.autoBlend.addEventListener('input', ()=>{
+  if(ui.autoMode.checked) applyAutoHeights();
+});
 function syncMode(){ applyModeVisibility(); updateHeightsAndColors(); }
 ui.modePipe.addEventListener('change', syncMode);
 ui.modeWall.addEventListener('change', syncMode);
