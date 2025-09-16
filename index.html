@@ -285,6 +285,15 @@
       <div class="row"><label>壁の不透明度</label><input id="wallOpacity" type="range" min="0" max="1" step="0.01" value="0.9"></div>
       <div class="row"><span class="muted">※パイプ/壁は同時表示可。ドラッグは表示中の形状に有効。</span><span></span></div>
     </div>
+    <div class="row"><label>面（Fill）</label><input id="modeFill" type="checkbox"></div>
+    <div class="row">
+      <label>面の張り方</label>
+      <select id="fillSide">
+        <option value="inside" selected>輪郭の内側</option>
+        <option value="outside">輪郭の外側</option>
+      </select>
+    </div>
+    <div class="row"><label>面の不透明度</label><input id="fillOpacity" type="range" min="0" max="1" step="0.01" value="0.35"></div>
 
     <!-- 手書き3D描画 -->
     <div class="section">
@@ -364,6 +373,9 @@ const ui = {
   drawSampling: document.getElementById('drawSampling'),
   playBtn: document.getElementById('playBtn'),
   playDelay: document.getElementById('playDelay'),
+  modeFill: document.getElementById('modeFill'),
+  fillSide: document.getElementById('fillSide'),
+  fillOpacity: document.getElementById('fillOpacity'),
 };
 /* ==== タブ管理 ==== */
 const tabbar = document.getElementById('tabbar');
@@ -718,6 +730,515 @@ function colorFromHeight(h,maxH){ if(maxH<=0 || h<=0) return new THREE.Color(0xf
 function currentMaxHeightStrict(){ if(!items.length) return 0; let m=0; for(const it of items) if(it.height>m) m=it.height; return m; }
 
 /* ==== geometry ==== */
+const EDGE_TOL = 1.0;      // ← ユーザー希望の ±1px
+const INTERSECT_EPS = 1e-4; // 交点計算の数値許容も少し緩める
+function getFillBoundsRect(pad = 0){
+  // 等圧線全体の外接矩形を返す
+  return allBounds(pad);
+}
+// 全アイテムのX,Y範囲から全体矩形を計算
+function allBounds(pad=0){
+  let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity;
+  for(const it of items){
+    for(const p of it.pathPoints){
+      if(p.x < minX) minX = p.x;
+      if(p.x > maxX) maxX = p.x;
+      if(p.y < minY) minY = p.y;
+      if(p.y > maxY) maxY = p.y;
+    }
+  }
+  if(!isFinite(minX)) return {minX:-500,maxX:500,minY:-500,maxY:500};
+  return {minX:minX-pad, maxX:maxX+pad, minY:minY-pad, maxY:maxY+pad};
+}
+
+
+// ===================== buildFillGeometry（完全版・決定論） =====================
+// points3: THREE.Vector3[]  … 等圧線の頂点（XYを使用）
+// mode   : 'inside' | 'outside'
+function buildFillGeometry(points3, mode = 'inside') {
+  // ── 矩形：等圧線の全体BBox（背景は使わない） ─────────────────────────
+  const R = allBounds(0);     // {minX,maxX,minY,maxY}
+  const SNAP = 1.0;           // 辺スナップしきい値（px）
+  const EPS  = 1e-7;
+  const V2 = (x,y)=> new THREE.Vector2(x,y);
+
+  // 角（反時計回り：BL→BR→TR→TL）
+  const BL = V2(R.minX, R.minY);
+  const BR = V2(R.maxX, R.minY);
+  const TR = V2(R.maxX, R.maxY);
+  const TL = V2(R.minX, R.maxY);
+
+  // 辺ID
+  const EDGE = { B:0, R:1, T:2, L:3 };
+  const isH  = e => e===EDGE.B || e===EDGE.T;
+
+  // ── 補助 ─────────────────────────────────────────────────────────
+  const near = (a,b,t=SNAP)=> Math.abs(a-b)<=t;
+  const samePt = (p,q,t=1e-6)=> p.distanceTo(q)<=t;
+
+  function edgeOfPoint(p){
+    if (near(p.y,R.minY) && p.x>=R.minX-SNAP && p.x<=R.maxX+SNAP) return EDGE.B;
+    if (near(p.x,R.maxX) && p.y>=R.minY-SNAP && p.y<=R.maxY+SNAP) return EDGE.R;
+    if (near(p.y,R.maxY) && p.x>=R.minX-SNAP && p.x<=R.maxX+SNAP) return EDGE.T;
+    if (near(p.x,R.minX) && p.y>=R.minY-SNAP && p.y<=R.maxY+SNAP) return EDGE.L;
+    return null;
+  }
+  function snapToRect(p){
+    // 最も近い辺に正確に投影
+    const dxL=Math.abs(p.x-R.minX), dxR=Math.abs(p.x-R.maxX);
+    const dyB=Math.abs(p.y-R.minY), dyT=Math.abs(p.y-R.maxY);
+    const m=Math.min(dxL,dxR,dyB,dyT);
+    const q=p.clone();
+    if(m===dxL) q.x=R.minX; else if(m===dxR) q.x=R.maxX; else if(m===dyB) q.y=R.minY; else q.y=R.maxY;
+    return q;
+  }
+  // 反時計回りの通しパラメータ u∈[0,4)
+  function rectU(p){
+    const w=R.maxX-R.minX, h=R.maxY-R.minY;
+    if (near(p.y,R.minY)) return 0 + (p.x-R.minX)/w;
+    if (near(p.x,R.maxX)) return 1 + (p.y-R.minY)/h;
+    if (near(p.y,R.maxY)) return 2 + (R.maxX-p.x)/w;
+    // L
+    return 3 + (R.maxY-p.y)/h;
+  }
+  function rectPointAt(u){
+    const w=R.maxX-R.minX, h=R.maxY-R.minY;
+    const k=((Math.floor(u)%4)+4)%4, t=u-k;
+    if(k===0) return V2(R.minX + t*w, R.minY);
+    if(k===1) return V2(R.maxX, R.minY + t*h);
+    if(k===2) return V2(R.maxX - t*w, R.maxY);
+    return V2(R.minX, R.maxY - t*h);
+  }
+  // 矩形上 P→Q を CCW/CW にたどる角列（PとQ含む）。中間角だけ増える。
+  function rectArc(P, Q, dir /*'ccw'|'cw'*/){
+    let u0 = rectU(P), u1 = rectU(Q);
+    // u1 を u0 側に巻いて単調に進める
+    if (dir==='ccw' && u1<=u0) u1 += 4;
+    if (dir==='cw'  && u1>=u0) u1 -= 4;
+
+    const verts=[P.clone()];
+    if (dir==='ccw'){
+      // u0→u1 の間の整数境界（=角）を順に
+      for(let k=Math.ceil(u0-EPS); k<u1-EPS; k++){
+        verts.push(rectPointAt(k));
+      }
+    }else{
+      // u0→u1 を負方向に
+      for(let k=Math.floor(u0+EPS); k>u1+EPS; k--){
+        verts.push(rectPointAt(k));
+      }
+    }
+    verts.push(Q.clone());
+    return verts;
+  }
+  // ポリライン A(sA)→…→B(sB) を抽出（A,Bは {pt,s}）
+  function polySliceBetween(poly2, A, B){
+    const out=[A.pt.clone()];
+    const iA=Math.floor(A.s), iB=Math.floor(B.s);
+    if(A.s<=B.s){
+      for(let i=iA+1;i<=iB;i++) out.push(poly2[i].clone());
+    }else{
+      for(let i=iA;i>iB;i--) out.push(poly2[i-1].clone());
+    }
+    out.push(B.pt.clone());
+    return out;
+  }
+  // 線分交差
+  function segSeg(a,b,c,d){
+    const r = new THREE.Vector2().subVectors(b,a);
+    const s = new THREE.Vector2().subVectors(d,c);
+    const rxs = r.x*s.y - r.y*s.x;
+    const qpxr = (c.x-a.x)*r.y - (c.y-a.y)*r.x;
+    if (Math.abs(rxs)<1e-9) return null;
+    const t=((c.x-a.x)*s.y - (c.y-a.y)*s.x)/rxs;
+    const u=((c.x-a.x)*r.y - (c.y-a.y)*r.x)/rxs;
+    if(t>-1e-9&&t<1+1e-9&&u>-1e-9&&u<1+1e-9) return new THREE.Vector2(a.x+t*r.x, a.y+t*r.y);
+    return null;
+  }
+
+  // ── 入力2D化＋端点スナップ ─────────────────────────────────
+  const poly2 = points3.map(p=>{
+    const v = new THREE.Vector2(p.x, p.y);
+    const e = edgeOfPoint(v);
+    if (e!==null) {
+      // 正確に辺上へ
+      if (e===EDGE.B||e===EDGE.T) v.y = (e===EDGE.B?R.minY:R.maxY);
+      else                        v.x = (e===EDGE.L?R.minX:R.maxX);
+      return v;
+    }
+    // 近ければ投影
+    const nearRect = Math.min(
+      Math.abs(v.x-R.minX), Math.abs(v.x-R.maxX),
+      Math.abs(v.y-R.minY), Math.abs(v.y-R.maxY)
+    ) <= SNAP;
+    return nearRect ? snapToRect(v) : v;
+  });
+
+  // 閉曲線なら通常塗り（outerは穴あき）
+  const closed = poly2.length>=3 && samePt(poly2[0], poly2[poly2.length-1], 1e-6);
+  if (closed){
+    if (mode==='inside') return new THREE.ShapeGeometry(new THREE.Shape(poly2));
+    const outer = new THREE.Shape([BL,BR,TR,TL,BL]);
+    outer.holes.push(new THREE.Path(poly2));
+    return new THREE.ShapeGeometry(outer);
+  }
+
+  // ── 矩形との交点を集める（A=最初, B=最後） ─────────────────────
+  const rectEdges = [[BL,BR],[BR,TR],[TR,TL],[TL,BL]];
+  const xs=[];
+  for(let i=0;i<poly2.length-1;i++){
+    const a=poly2[i], b=poly2[i+1];
+    for(const [c,d] of rectEdges){
+      const h = segSeg(a,b,c,d);
+      if(h){
+        // polyパラメータ s = i + t
+        const ab = new THREE.Vector2().subVectors(b,a);
+        const t = Math.abs(ab.x)>Math.abs(ab.y)
+          ? ((h.x-a.x)/(ab.x||1e-12))
+          : ((h.y-a.y)/(ab.y||1e-12));
+        xs.push({pt:h.clone(), s: i + THREE.MathUtils.clamp(t,0,1)});
+      }
+    }
+  }
+  // 端点自体が辺上なら交点として加える
+  const pushIfOn = (p, sVal)=>{
+    if(edgeOfPoint(p)!==null && !xs.some(h=>samePt(h.pt,p,1e-7))) xs.push({pt:p.clone(), s:sVal});
+  };
+  if(poly2.length){ pushIfOn(poly2[0],0); pushIfOn(poly2[poly2.length-1], poly2.length-1); }
+
+  if(xs.length<2){
+    // 念のため端点を最寄り辺に投影して補完
+    if(poly2.length>=2){
+      xs.push({pt:snapToRect(poly2[0]), s:0});
+      xs.push({pt:snapToRect(poly2[poly2.length-1]), s:poly2.length-1});
+    }else{
+      return new THREE.ShapeGeometry(new THREE.Shape());
+    }
+  }
+  xs.sort((a,b)=>a.s-b.s);
+  const A = xs[0], B = xs[xs.length-1];
+
+  // 等圧線側（A→…→B）
+  const curvePart = polySliceBetween(poly2, A, B);
+
+  // 端点の属する辺
+  const eA = edgeOfPoint(A.pt) ?? edgeOfPoint(snapToRect(A.pt));
+  const eB = edgeOfPoint(B.pt) ?? edgeOfPoint(snapToRect(B.pt));
+
+  // ── 矩形側（B→…→A）の経路を「決め打ちルール」で構成 ────────────────
+  let arcBA = null;
+
+  if (eA === eB){
+    // (1) 同一辺
+    if (mode==='inside'){
+      // 角を通らず同じ辺上を直結（短い方）
+      arcBA = [B.pt.clone(), A.pt.clone()];
+    }else{
+      // 外側：残り三角を回る（どちら向きでも3角。ccwで固定）
+      arcBA = rectArc(B.pt, A.pt, 'ccw'); // 3つの角を通る
+    }
+  } else if (isH(eA) === isH(eB)){
+    // (2) 同一軸の反対辺（左右 or 上下）
+    // 仕様：内側＝A→B を反時計回りに2角通過
+    //       ⇒ B→A は時計回り
+    //       外側＝その逆
+    arcBA = (mode==='inside')
+      ? rectArc(B.pt, A.pt, 'cw')   // ← A→B(CCW) と同義
+      : rectArc(B.pt, A.pt, 'ccw'); // ← A→B(CW)
+  } else {
+    // (3) 異軸（隣接辺）
+    // 仕様：内側＝共有する1角のみ、外側＝残り3角
+    const arcCCW = rectArc(B.pt, A.pt, 'ccw');
+    const arcCW  = rectArc(B.pt, A.pt, 'cw');
+    const cntCCW = Math.max(0, arcCCW.length-2); // 中間角の数
+    const cntCW  = Math.max(0, arcCW.length-2);
+    if (mode==='inside'){
+      // 1角側を選ぶ
+      arcBA = (cntCCW===1) ? arcCCW : arcCW;
+    }else{
+      // 3角側
+      arcBA = (cntCCW===3) ? arcCCW : arcCW;
+    }
+  }
+
+  // ── ポリゴン結合：A→…→B（等圧線）＋ B→…→A（矩形） ─────────────────
+  const polygon = [...curvePart, ...arcBA];
+  if (!samePt(polygon[0], polygon[polygon.length-1])) polygon.push(polygon[0].clone());
+  if (polygon.length < 3) return new THREE.ShapeGeometry(new THREE.Shape());
+  return new THREE.ShapeGeometry(new THREE.Shape(polygon));
+}
+
+
+/* ===== ここからヘルパー ===== */
+const near = (a,b,eps=1e-6)=> Math.abs(a-b)<=eps;
+
+function rectLoop(minX,minY,maxX,maxY){
+  return [
+    new THREE.Vector2(minX,minY),
+    new THREE.Vector2(maxX,minY),
+    new THREE.Vector2(maxX,maxY),
+    new THREE.Vector2(minX,maxY),
+    new THREE.Vector2(minX,minY),
+  ];
+}
+function edgeOfPoint(p, r, eps=1e-6){
+  if (near(p.y,r.minY,eps)) return 'B';
+  if (near(p.x,r.maxX,eps)) return 'R';
+  if (near(p.y,r.maxY,eps)) return 'T';
+  if (near(p.x,r.minX,eps)) return 'L';
+  return null;
+}
+// 矩形周（反時計回り）の“通しパラメータ u∈[0,4)”
+function projU(p, r){
+  if (edgeOfPoint(p,r)==='B') return 0 + (p.x - r.minX)/(r.maxX-r.minX);
+  if (edgeOfPoint(p,r)==='R') return 1 + (p.y - r.minY)/(r.maxY-r.minY);
+  if (edgeOfPoint(p,r)==='T') return 2 + (r.maxX - p.x)/(r.maxX-r.minX);
+  if (edgeOfPoint(p,r)==='L') return 3 + (r.maxY - p.y)/(r.maxY-r.minY);
+  return 0;
+}
+function rectPointAtU(r, u){
+  const k = Math.floor(u)%4, t = u - Math.floor(u);
+  if (k===0) return new THREE.Vector2(r.minX + t*(r.maxX-r.minX), r.minY);
+  if (k===1) return new THREE.Vector2(r.maxX, r.minY + t*(r.maxY-r.minY));
+  if (k===2) return new THREE.Vector2(r.maxX - t*(r.maxX-r.minX), r.maxY);
+  return new THREE.Vector2(r.minX, r.maxY - t*(r.maxY-r.minY));
+}
+// A→B の矩形“辺”経路（角のみ）を、指定回転方向で返す
+function rectPathBetween(A, B, r, clockwise=true){
+  let u0 = projU(A.pt, r), u1 = projU(B.pt, r);
+  if (clockwise && u1>u0) u1 -= 4;
+  if (!clockwise && u1<u0) u1 += 4;
+
+  const verts = [];
+  const corners = [0,1,2,3,4];
+  for (let ci=0; ci<corners.length; ci++){
+    const cu = corners[ci];
+    if ((u0 < cu && cu < u1) || (u1 < cu && cu < u0)){
+      verts.push(rectPointAtU(r, cu));
+    }
+  }
+  verts.sort((a,b)=> (projU(a,r)-projU(b,r)) * (clockwise?-1:1));
+  return verts.concat([B.pt.clone()]);
+}
+// B の“ペア”に当たる交点 P へ、ポリラインに沿って切り出す
+function polylineSliceBetween(poly2, A, B){
+  const out=[A.pt.clone()];
+  const iA=Math.floor(A.s), iB=Math.floor(B.s);
+  if (A.s <= B.s){
+    for(let i=iA+1;i<=iB;i++) out.push(poly2[i].clone());
+  }else{
+    // 逆向き
+    for(let i=iA;i>iB;i--) out.push(poly2[i-1].clone());
+  }
+  out.push(B.pt.clone());
+  return out;
+}
+// 交点配列 xsByU を起点に、矩形→ポリライン→矩形…で1周ループを構成
+function weaveLoop(xsByU, pair, indexById, rect, clockwise, poly2){
+  const start = xsByU[0];
+  let cur = start;
+  const res = [cur.pt.clone()];
+  let guard = 0, m = xsByU.length;
+
+  while (true){
+    if (++guard > m*4) break; // 念のためブレーカ
+
+    // (1) 矩形辺：cur → 次の交点（矩形順）
+    const i = indexById.get(cur.id);
+    const nxt = xsByU[(i+1)%m];
+    const rectArc = rectPathBetween(cur, nxt, rect, clockwise);
+    for(let k=1;k<rectArc.length;k++) res.push(rectArc[k].clone()); // 先頭重複を除く
+
+    // (2) ポリライン：nxt → pair(nxt)
+    const pid = pair.get(nxt.id);
+    const peer = xsByU[indexById.get(pid)];
+    const polySeg = polylineSliceBetween(poly2, nxt, peer);
+    for(let k=1;k<polySeg.length;k++) res.push(polySeg[k].clone());
+
+    cur = peer;
+    if (cur.id === start.id) break; // 1周
+  }
+
+  // 閉じていなければ明示的に閉じる
+  if (res.length>2 && res[0].distanceTo(res[res.length-1])>1e-6) res.push(res[0].clone());
+  return res;
+}
+
+function perimeterLen(arr){
+  let L=0; for(let i=0;i<arr.length-1;i++) L += arr[i].distanceTo(arr[i+1]); return L;
+}
+function polygonArea2D(pts){
+  let a=0; for(let i=0;i<pts.length-1;i++){ const p=pts[i], q=pts[i+1]; a += p.x*q.y - q.x*p.y; }
+  return a*0.5;
+}
+// 既存 dedupIntersections の“t”ではなく id/座標でまとめ直す
+function dedupIntersectionsParamed(hits, eps=1e-7){
+  // 位置重複を除去（u,s を平均寄せ）
+  hits.sort((a,b)=> a.pt.x!==b.pt.x ? a.pt.x-b.pt.x : a.pt.y-b.pt.y);
+  const out=[];
+  for(const h of hits){
+    const last = out[out.length-1];
+    if(last && last.pt.distanceTo(h.pt) <= eps){
+      // 併合（代表に近い方を残す）
+      last.s = Math.min(last.s, h.s);
+      last.u = Math.min(last.u, h.u);
+    }else{
+      out.push({...h});
+    }
+  }
+  // id ふり直し
+  for(let i=0;i<out.length;i++) out[i].id = i;
+  return out;
+}
+
+// 線分 vs 矩形交差（変更なし）
+function segmentRectIntersections(a,b,r,eps=1e-7){
+  const hits=[];
+  const tryEdge=(edge, p1, p2)=>{
+    const h = segmentIntersection(a,b,p1,p2,eps);
+    if(h){
+      hits.push({pt:h, t:h._tAB, edge});
+    }else{
+      // ★ ほぼ接していて取りこぼすケースを救う：
+      //   端点がエッジから ±EDGE_TOL 以内なら、その直交投影を交点として採用
+      const ap = projectToEdgeIfNear(a, edge, r, EDGE_TOL);
+      const bp = projectToEdgeIfNear(b, edge, r, EDGE_TOL);
+      if (ap || bp) {
+        // a→b のパラメータ t を出すため、投影点を使う
+        const P = ap || bp;
+        const t = paramOnSeg(P, a, b);
+        const q = new THREE.Vector2(P.x, P.y); q._tAB = t;
+        hits.push({pt:q, t, edge});
+      }
+    }
+  };
+  tryEdge('B', new THREE.Vector2(r.minX,r.minY), new THREE.Vector2(r.maxX,r.minY));
+  tryEdge('R', new THREE.Vector2(r.maxX,r.minY), new THREE.Vector2(r.maxX,r.maxY));
+  tryEdge('T', new THREE.Vector2(r.maxX,r.maxY), new THREE.Vector2(r.minX,r.maxY));
+  tryEdge('L', new THREE.Vector2(r.minX,r.maxY), new THREE.Vector2(r.minX,r.minY));
+  // t順で近接除去
+  hits.sort((a,b)=>a.t-b.t);
+  const out=[];
+  for(const h of hits){
+    if(!out.length || out[out.length-1].pt.distanceTo(h.pt)>eps) out.push(h);
+  }
+  return out;
+}
+// 補助：点がエッジに ±tol 以内なら直交投影を返す
+function projectToEdgeIfNear(p, edge, r, tol){
+  if (edge==='B' && Math.abs(p.y - r.minY) <= tol && p.x>=r.minX-tol && p.x<=r.maxX+tol)
+    return new THREE.Vector2(THREE.MathUtils.clamp(p.x, r.minX, r.maxX), r.minY);
+  if (edge==='T' && Math.abs(p.y - r.maxY) <= tol && p.x>=r.minX-tol && p.x<=r.maxX+tol)
+    return new THREE.Vector2(THREE.MathUtils.clamp(p.x, r.minX, r.maxX), r.maxY);
+  if (edge==='L' && Math.abs(p.x - r.minX) <= tol && p.y>=r.minY-tol && p.y<=r.maxY+tol)
+    return new THREE.Vector2(r.minX, THREE.MathUtils.clamp(p.y, r.minY, r.maxY));
+  if (edge==='R' && Math.abs(p.x - r.maxX) <= tol && p.y>=r.minY-tol && p.y<=r.maxY+tol)
+    return new THREE.Vector2(r.maxX, THREE.MathUtils.clamp(p.y, r.minY, r.maxY));
+  return null;
+}
+function segmentIntersection(a,b,c,d,eps=1e-7){
+  const r = new THREE.Vector2().subVectors(b,a);
+  const s = new THREE.Vector2().subVectors(d,c);
+  const rxs = r.x*s.y - r.y*s.x;
+  const qpxr = (c.x-a.x)*r.y - (c.y-a.y)*r.x;
+  if (Math.abs(rxs) < eps && Math.abs(qpxr) < eps){
+    const cand = [a,b,c,d];
+    for(const p of cand){
+      if (pointOnSegment(p,c,d,eps) && pointOnSegment(p,a,b,eps)){
+        const t = paramOnSeg(p,a,b);
+        const out = p.clone(); out._tAB = t;
+        return out;
+      }
+    }
+    return null;
+  }
+  if (Math.abs(rxs) < eps) return null;
+  const t = ((c.x-a.x)*s.y - (c.y-a.y)*s.x) / rxs;
+  const u = ((c.x-a.x)*r.y - (c.y-a.y)*r.x) / rxs;
+  if (t>=-eps && t<=1+eps && u>=-eps && u<=1+eps){
+    const p = new THREE.Vector2(a.x + t*r.x, a.y + t*r.y);
+    p._tAB = t; return p;
+  }
+  return null;
+}
+function pointOnSegment(p,a,b,eps=1e-6){
+  const ap = new THREE.Vector2().subVectors(p,a);
+  const ab = new THREE.Vector2().subVectors(b,a);
+  const cross = Math.abs(ap.x*ab.y - ap.y*ab.x);
+  if (cross > eps) return false;
+  const dot = ap.dot(ab);
+  if (dot < -eps) return false;
+  if (dot > ab.lengthSq()+eps) return false;
+  return true;
+}
+function paramOnSeg(p,a,b){
+  const ab = new THREE.Vector2().subVectors(b,a);
+  const ap = new THREE.Vector2().subVectors(p,a);
+  const len2 = ab.lengthSq()||1;
+  return THREE.MathUtils.clamp(ap.dot(ab)/len2, 0, 1);
+}
+function dedupPolyline(arr, eps=1e-7){
+  const out=[]; for(const p of arr){
+    if(!out.length || out[out.length-1].distanceTo(p)>eps) out.push(p.clone());
+  }
+  if(out.length>2 && out[0].distanceTo(out[out.length-1])>eps) out.push(out[0].clone());
+  return out;
+}
+
+
+function ensureFillMeshes(it){
+  const side = (it.fillMode || ui.fillSide.value);
+  const opacity = parseFloat(ui.fillOpacity.value);
+
+  // 形状作成
+  const g  = buildFillGeometry(it.pathPoints, side);
+  const pg = buildFillGeometry(it.pathPoints, side);
+
+  // ← ここで「面が作れたか」を判定（position が3頂点以上）
+  const pos = g.getAttribute?.('position');
+  const hasFill = !!(pos && pos.count >= 3);
+  it.hasFill = hasFill;
+
+  const color = it.userColor ? new THREE.Color(it.userColor)
+                             : new THREE.Color(it.pipeMesh.material.color.getHex());
+  const parent = it.parentGroup || it.pipeMesh.parent || rootLines;
+
+  if(!it.fillMesh){
+    it.fillMesh = new THREE.Mesh(
+      g,
+      new THREE.MeshStandardMaterial({
+        color, roughness:.9, metalness:.02,
+        side:THREE.DoubleSide, transparent:true, opacity
+      })
+    );
+    it.pickFillMesh = new THREE.Mesh(
+      pg,
+      new THREE.MeshBasicMaterial({ color:0x000000, transparent:true, opacity:0.001, depthWrite:false })
+    );
+    it.pickFillMesh.renderOrder = -1000;
+    parent.add(it.fillMesh, it.pickFillMesh);
+  }else{
+    it.fillMesh.geometry.dispose();
+    it.fillMesh.geometry = g;
+    it.fillMesh.material.opacity = opacity;
+    it.fillMesh.material.transparent = opacity < 1;
+
+    it.pickFillMesh.geometry.dispose();
+    it.pickFillMesh.geometry = pg;
+
+    if(it.fillMesh.parent !== parent){
+      it.fillMesh.parent?.remove(it.fillMesh);
+      it.pickFillMesh.parent?.remove(it.pickFillMesh);
+      parent.add(it.fillMesh, it.pickFillMesh);
+    }
+  }
+
+  // 面が無い場合は不可視化して誤ピックを防ぐ
+  it.fillMesh.visible     = hasFill && ui.modeFill.checked && (it.ui?.vis?.checked ?? true);
+  it.pickFillMesh.visible = hasFill && ui.modeFill.checked && (it.ui?.vis?.checked ?? true);
+}
+
+
 function buildTubeGeometry(points, radius){
   const curve=new THREE.CatmullRomCurve3(points,false,'centripetal',0.5);
   const seg=Math.max(16, Math.min(2048, Math.floor(points.length*1.5)));
@@ -932,12 +1453,16 @@ async function loadSVGFromString(svgText, opts = {}){
       const cen=centroidXY(pts2), area=polygonArea(pts2);
       items.push({
         pipeMesh, wallMesh, pickPipeMesh, pickWallMesh,
+        fillMesh:null, pickFillMesh:null,
         activeMesh:null, activePick:null,
         pathPoints:pts3, path2D: pts2.map(pt=>({x:+pt.x,y:+pt.y})),
         height:0, ui:{}, centroid:cen, pressure:undefined, area, autoTarget:0,
-        userColor:null, wallExtrudedZ:true, kind:'svg'
+        userColor:null, wallExtrudedZ:true, kind:'svg',
+        parentGroup: linesGroup, 
+        fillMode: ui.fillSide.value
       });
       linesGroup.add(pipeMesh, wallMesh, pickPipeMesh, pickWallMesh);
+      ensureFillMeshes(items[items.length-1]);
     }
   }
 
@@ -1023,6 +1548,15 @@ function updateHeightsAndColors(){
       it.wallMesh.scale.z = 1;
       it.pickWallMesh.scale.z = 1;
     }
+        // 面は「Z位置だけ」動かす（厚みはゼロ、XY面）
+        if(it.fillMesh){
+      it.fillMesh.position.z = z;
+      it.pickFillMesh.position.z = z;
+
+      // 色も線と統一（ユーザ色優先 / 自動カラー）
+      const col = it.userColor ? new THREE.Color(it.userColor) : colorFromHeight(it.height, maxH);
+      it.fillMesh.material.color.copy(col);
+    }
 
     const col = it.userColor ? new THREE.Color(it.userColor) : colorFromHeight(it.height, maxH);
     it.pipeMesh.material.color.copy(col);
@@ -1037,18 +1571,65 @@ function updateHeightsAndColors(){
  }
 }
 function applyModeVisibility(){
-  const showPipe=ui.modePipe.checked;
-  const showWall=ui.modeWall.checked;
+  const showPipe = ui.modePipe.checked;
+  const showWall = ui.modeWall.checked;
+  const showFill = ui.modeFill.checked;
+
   for(const it of items){
     const visible = (it.ui?.vis?.checked ?? true);
-    it.pipeMesh.visible = showPipe && visible;
-    it.wallMesh.visible = showWall && visible;
+
+    // 表示切り替え
+    it.pipeMesh.visible     = showPipe && visible;
+    it.wallMesh.visible     = showWall && visible;
     it.pickPipeMesh.visible = showPipe && visible;
     it.pickWallMesh.visible = showWall && visible;
-    if (showWall){ it.activeMesh = it.wallMesh; it.activePick = it.pickWallMesh; }
-    else { it.activeMesh = it.pipeMesh; it.activePick = it.pickPipeMesh; }
+
+    // ensureFillMeshes 側でも可視を調整するが、ここでも念のため
+    if(it.fillMesh){
+      const ok = !!it.hasFill && showFill && visible;
+      it.fillMesh.visible     = ok;
+      it.pickFillMesh.visible = ok;
+    }
+
+    // ドラッグ優先度：Fill(作れた時だけ) > Wall > Pipe
+    if (showFill && it.fillMesh && it.hasFill && it.fillMesh.visible){
+      it.activeMesh = it.fillMesh; it.activePick = it.pickFillMesh;
+    } else if (showWall && it.wallMesh.visible){
+      it.activeMesh = it.wallMesh; it.activePick = it.pickWallMesh;
+    } else {
+      it.activeMesh = it.pipeMesh; it.activePick = it.pickPipeMesh;
+    }
   }
 }
+
+function rebuildAllFills(){
+  for(const it of items){
+    if(it.fillMesh){
+      // pick含め一旦 dispose は不要（ensure 内で geometry 差し替え）
+      ensureFillMeshes(it);
+    }else{
+      ensureFillMeshes(it);
+    }
+  }
+  applyModeVisibility();
+  updateHeightsAndColors();
+}
+
+ui.modeFill.addEventListener('change', ()=>{ applyModeVisibility(); });
+ui.fillSide.addEventListener('change', ()=>{
+  const v = ui.fillSide.value;
+  for(const it of items){ it.fillMode = v; }
+  rebuildAllFills();       // 🔧 全件を新しい既定に合わせる（手元で個別変更も可）
+});
+ui.fillOpacity.addEventListener('input', ()=>{
+  const op = parseFloat(ui.fillOpacity.value);
+  for(const it of items){
+    if(it.fillMesh){
+      it.fillMesh.material.opacity = op;
+      it.fillMesh.material.transparent = op < 1;
+    }
+  }
+});
 
 /* フォーカススクロール */
 function focusPanelCardForItem(it){
@@ -1056,7 +1637,6 @@ function focusPanelCardForItem(it){
   if(!el) return;
   el.classList.add('focus-ring');
   el.setAttribute('tabindex','-1');
-  el.focus({preventScroll:true});
   el.scrollIntoView({block:'nearest', behavior:'smooth'});
   setTimeout(()=>el.classList.remove('focus-ring'), 900);
 }
@@ -1155,7 +1735,25 @@ function buildList(orderByPressure=false){
   };
   row2.append(hint, num);
   card.appendChild(row2);
-
+  // 面の張り方（個別）
+  const row3 = document.createElement('div');
+  row3.className = 'row';
+  const lab3 = document.createElement('label');
+  lab3.textContent = '面の張り方（この線）';
+  const sel3 = document.createElement('select');
+  sel3.innerHTML = `
+    <option value="inside">輪郭の内側</option>
+    <option value="outside">輪郭の外側</option>
+  `;
+  sel3.value = it.fillMode || 'inside';
+  sel3.onchange = () => {
+    it.fillMode = sel3.value;
+    ensureFillMeshes(it);   // その場で作り直し
+    applyModeVisibility();
+    updateHeightsAndColors();
+  };
+  row3.append(lab3, sel3);
+  card.appendChild(row3);
   // UI参照を保存
   it.ui = { slider, num, color, vis, card };
   ui.list.appendChild(card);
@@ -1275,7 +1873,9 @@ function commitTempToItem(){
     pathPoints: drawState.pts.map(p=> p.clone()),
     path2D: drawState.pts.map(p=>({x:p.x, y:-p.y})),
     height: 0, ui:{}, centroid:{x:0,y:0}, pressure:undefined, area:0, autoTarget:0,
-    userColor: `#${col.getHexString()}`, wallExtrudedZ, kind
+    userColor: `#${col.getHexString()}`, wallExtrudedZ, kind,
+    parentGroup: rootLines, 
+    fillMode: ui.fillSide.value
   };
   items.push(it);
   rootLines.add(pipeMesh, wallMesh, pickPipeMesh, pickWallMesh);
@@ -1294,8 +1894,7 @@ function commitTempToItem(){
   }
   applyModeVisibility();
   const currentTab = tabs.find(t => t.id === activeTabId);
-if (currentTab) currentTab.itemsState = captureItemsState();
-
+  if (currentTab) currentTab.itemsState = captureItemsState();
 }
 
 /* ==== Pointer ==== */
@@ -1589,13 +2188,17 @@ async function loadProjectSVG(svgText){
     const cen = pts2.length ? centroidXY(pts2) : centroidXY(canonical3Dto2D(pathPoints));
     const it = {
       pipeMesh, wallMesh, pickPipeMesh, pickWallMesh,
+      fillMesh:null, pickFillMesh:null,
       activeMesh:null, activePick:null,
       pathPoints, path2D: pts2,
       height, ui:{}, centroid: cen, pressure:undefined, area:0, autoTarget:0,
-      userColor, wallExtrudedZ: (wallExZ ?? wallExtrudedZ), kind
+      userColor, wallExtrudedZ: (wallExZ ?? wallExtrudedZ), kind,
+      parentGroup: linesGroup, 
+      fillMode: ui.fillSide.value
     };
     items.push(it);
     linesGroup.add(pipeMesh, wallMesh, pickPipeMesh, pickWallMesh);
+    ensureFillMeshes(it);
     it.ui.vis = {checked:visible};
     pipeMesh.visible = visible && ui.modePipe.checked;
     wallMesh.visible = visible && ui.modeWall.checked;
@@ -1646,38 +2249,55 @@ ui.exportMenu.addEventListener('click', (e)=>{
   if(act==='save-svg')  doSaveSVG();
 });
 
-// SVG/SVGZ を開く
+// ▼ SVG/SVGZ を開く（完全差し替え）
 ui.fileRaw.addEventListener('change', async (e)=>{
-  const f=e.target.files?.[0]; if(!f) return;
+  const f = e.target.files?.[0]; 
+  if(!f) return;
+
   try{
-    const raw=await readSvgOrSvgz(f);
-    const doc=new DOMParser().parseFromString(raw,"image/svg+xml");
-    const svg=doc.querySelector("svg");
-    if(svg){
-      const {w,h}=normalizeSvgRoot(svg);
-      lastSvgDims={w,h};
-      lastRawSvgText=new XMLSerializer().serializeToString(svg);
-      await buildOrUpdateWeatherPlane(lastRawSvgText);
-    }
-    const only=extractIsobarsOnly(raw);
-    await loadSVGFromString(only);
-    fitView(chartGroup);
+    // いま開いているタブの状態を先に保存
+    saveActiveTabState();
 
-    // ▼ここを追加：タブを作る（タブ名はファイル名）
-    addTabFromRaw(f.name, lastRawSvgText, only, lastSvgDims);
+    // 新しいファイルは“ここでは”シーンに読み込まない
+    const raw = await readSvgOrSvgz(f);
+    const doc = new DOMParser().parseFromString(raw, "image/svg+xml");
+    const svg = doc.querySelector("svg");
+    if(!svg) return;
 
-  }catch(err){ console.error('読み込みエラー',err); }
+    // ルート正規化と各種テキスト化
+    const { w, h } = normalizeSvgRoot(svg);
+    const rawSvgText = new XMLSerializer().serializeToString(svg);
+    const onlyIsobars = extractIsobarsOnly(raw);
+
+    // タブを作る。実際の読み込みは activateTab() 側で行われる
+    addTabFromRaw(f.name, rawSvgText, onlyIsobars, { w, h });
+
+  }catch(err){
+    console.error('読み込みエラー', err);
+  }finally{
+    // 同じファイルを続けて選んだときのために input をリセット
+    e.target.value = '';
+  }
 });
 
-// 保存SVG（本アプリ）を開く
+// ▼ 保存SVG（本アプリ）を開く（完全差し替え）
 ui.fileSaved.addEventListener('change', async (e)=>{
-  const f = e.target.files?.[0]; if(!f) return;
-  const text = await f.text();
-  await loadProjectSVG(text);
-  fitView(chartGroup);
+  const f = e.target.files?.[0]; 
+  if(!f) return;
 
-  // ▼ここを追加：タブを作る（タブ名はファイル名）
-  addTabFromProject(f.name, text);
+  try{
+    // いま開いているタブの状態を先に保存
+    saveActiveTabState();
+
+    // ここでは読み込まない。テキストだけ確保してタブ化
+    const projectText = await f.text();
+    addTabFromProject(f.name, projectText);
+
+  }catch(err){
+    console.error('読み込みエラー', err);
+  }finally{
+    e.target.value = '';
+  }
 });
 
 
